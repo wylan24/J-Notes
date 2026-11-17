@@ -108,6 +108,9 @@ export interface StickyItem extends ItemBase {
 
 export type PageItem = TextItem | ImageItem | StickyItem;
 
+/** Page fields a `page.updated` op can change. An undefined value means the field is absent. */
+export type PagePatch = Partial<Pick<Page, 'template' | 'size' | 'paper' | 'background'>>;
+
 /** Fields an `items.updated` op can change. */
 export type ItemPatch = Partial<Omit<TextItem, 'id' | 'kind'> & Omit<ImageItem, 'id' | 'kind'> & Omit<StickyItem, 'id' | 'kind'>>;
 

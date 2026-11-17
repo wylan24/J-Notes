@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { NotebookMeta } from '../src/core/model';
 import { DocumentStore } from '../src/core/store';
+import { movePageOp, updatePageOp } from '../src/core/ops';
 import { addSession, appendEvents, deleteElement, listElements, renameElement, saveElement, clearSessions, compact, createNotebook, deleteNotebook, getBlob, getBlobs, listSessions, listNotebooks, loadDocument, openDb, putBlob, resetDbForTests } from '../src/storage/db';
 import { Persister } from '../src/storage/persister';
 
@@ -45,6 +46,22 @@ describe('event-sourced storage', () => {
     expect(reloaded.doc).toEqual(store.doc);
     expect(reloaded.doc.pages[0].strokes.map((s) => s.id)).toEqual(['s0', 's1', 's2', 's3']);
     expect((await listNotebooks())[0].pageCount).toBe(1);
+  });
+
+  it('keeps a moved page order and page changes after reload', async () => {
+    const pages = ['a', 'b', 'c'].map((id) => ({ id, template: 'blank' as const, strokes: [], items: [] }));
+    await createNotebook({ ...meta('n3'), pageCount: 3 }, { id: 'n3', pages });
+    const { doc, seq } = await loadDocument('n3');
+    const store = new DocumentStore(doc, seq);
+    const persister = new Persister(store, 0);
+    store.dispatch([movePageOp(store.doc, 'c', 0)!]);
+    store.dispatch([updatePageOp(store.doc.pages[1], { paper: 'yellow' })!]);
+    await persister.dispose();
+
+    const reloaded = await loadDocument('n3');
+    expect(reloaded.doc.pages.map((p) => p.id)).toEqual(['c', 'a', 'b']);
+    expect(reloaded.doc.pages[1].paper).toBe('yellow');
+    expect(reloaded.doc).toEqual(store.doc);
   });
 
   it('compaction keeps the document identical and drops old events', async () => {

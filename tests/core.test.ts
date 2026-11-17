@@ -19,7 +19,7 @@ import { fromFile, toFile } from '../src/io/notebookFile';
 import { paintPage, PAPER_STYLES } from '../src/render/page';
 import { newSticky } from '../src/core/items';
 import { clampTarget } from '../src/core/zoomWindow';
-import { applyOp, inverseOp, removeStrokesOp, replay, type DocOp } from '../src/core/ops';
+import { applyOp, inverseOp, movePageOp, removeStrokesOp, replay, updatePageOp, type DocOp } from '../src/core/ops';
 import { DocumentStore } from '../src/core/store';
 import { strokeHitsCircle, strokesInLasso } from '../src/core/geometry';
 import { detectLine } from '../src/core/shapes';
@@ -218,5 +218,67 @@ describe('new notebook setup', () => {
     const first = blankPage('p1', { template: 'dotted', size: sizeFor('a5', 'landscape'), paper: 'yellow' });
     const next = blankPage('p2', { template: 'dotted', size: pageSize(first), paper: pagePaper(first) });
     expect(next).toEqual({ ...first, id: 'p2' });
+  });
+});
+
+describe('page moves and updates', () => {
+  const blank = (id: string): Page => ({ id, template: 'blank', strokes: [], items: [] });
+  const fourPages = (): NotebookDoc => ({ id: 'doc', pages: ['a', 'b', 'c', 'd'].map(blank) });
+  const order = (d: NotebookDoc) => d.pages.map((p) => p.id).join('');
+
+  it('moves a page forward and back, and its inverse puts it back', () => {
+    const doc = fourPages();
+    for (const [id, to, expected] of [['a', 2, 'bcad'], ['d', 0, 'dabc'], ['b', 99, 'acdb'], ['c', 1, 'acbd']] as const) {
+      const op = movePageOp(doc, id, to)!;
+      const moved = applyOp(doc, op);
+      expect(order(moved)).toBe(expected);
+      expect(applyOp(moved, inverseOp(op))).toEqual(doc);
+    }
+    expect(movePageOp(doc, 'b', 1)).toBeNull(); // already there
+    expect(movePageOp(doc, 'zz', 0)).toBeNull();
+  });
+
+  it('records the old value of each changed field, including absent ones', () => {
+    const page = blank('a');
+    const op = updatePageOp(page, { template: 'cornell', size: sizeFor('a5', 'landscape'), paper: 'white' })!;
+    // paper 'white' differs from absent, so it is recorded; previous holds undefined for absent fields.
+    expect(op).toEqual({
+      type: 'page.updated',
+      pageId: 'a',
+      patch: { template: 'cornell', size: { w: 794, h: 559 }, paper: 'white' },
+      previous: { template: 'blank', size: undefined, paper: undefined },
+    });
+    expect(updatePageOp(page, { template: 'blank' })).toBeNull();
+  });
+
+  it('undoes and redoes moves and updates through the store, restoring absent fields exactly', () => {
+    const store = new DocumentStore(fourPages());
+    const original = store.doc;
+    store.dispatch([movePageOp(store.doc, 'a', 3)!]);
+    store.dispatch([updatePageOp(store.doc.pages[0], { paper: 'dark', background: { kind: 'image', blobId: 'img' } })!]);
+    const after = store.doc;
+    expect(order(after)).toBe('bcda');
+    expect(after.pages[0]).toMatchObject({ id: 'b', paper: 'dark', background: { kind: 'image', blobId: 'img' } });
+
+    store.undo();
+    expect(store.doc.pages[0]).toEqual(blank('b'));
+    expect('paper' in store.doc.pages[0]).toBe(false);
+    store.undo();
+    expect(store.doc).toEqual(original);
+    store.redo();
+    store.redo();
+    expect(store.doc).toEqual(after);
+  });
+
+  it('replays logged moves and updates to the same document', () => {
+    const doc = fourPages();
+    const ops = [movePageOp(doc, 'c', 0)!];
+    const mid = applyOp(doc, ops[0]);
+    ops.push(updatePageOp(mid.pages[0], { template: 'music' })!);
+    const live = ops.reduce(applyOp, doc);
+    const events = ops.map((op, i) => ({ docId: 'doc', seq: i + 1, ts: 0, op }));
+    expect(replay(doc, events)).toEqual(live);
+    expect(order(live)).toBe('cabd');
+    expect(live.pages[0].template).toBe('music');
   });
 });
