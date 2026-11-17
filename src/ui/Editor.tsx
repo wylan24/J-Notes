@@ -6,6 +6,7 @@ import { deleteSelectionOps } from '../core/selection';
 import { appendPage, getBlobs, getMeta, listElements, loadDocument, putBlob, saveElement, updateMeta } from '../storage/db';
 import { bookmarkedIndices, changeTemplateOp, clonePage, duplicatePageOp, insertPageOp, insertPagesOps, isBookmarked, pageBlobIds, toggleBookmarkOp } from '../core/pages';
 import { pagesFromFiles } from '../io/importPages';
+import { afterEditorClose, settleQuicknote } from '../storage/quicknotes';
 import { movePageOp } from '../core/ops';
 import { ChangeTemplateDialog, NotebookPickerDialog, PageMenuItems, type PageActionHandlers } from './PageActions';
 import { PageSidebar } from './PageSidebar';
@@ -100,6 +101,9 @@ function writePref(key: string, value: unknown) {
     /* private mode etc. */
   }
 }
+
+/** How many editors have each notebook open (StrictMode briefly mounts two). */
+const openEditors = new Map<string, number>();
 
 export function Editor({ id, onExit }: { id: string; onExit: () => void }) {
   const [state, setState] = useState<{ store: DocumentStore; meta: NotebookMeta; snapshotSeq: number } | { error: string } | null>(null);
@@ -219,6 +223,8 @@ function EditorInner({
   // cycle gets a fresh, subscribed persister each time.
   useEffect(() => {
     let lastThumb = 0;
+    const docId = store.doc.id;
+    openEditors.set(docId, (openEditors.get(docId) ?? 0) + 1);
     const persister = new Persister(store, snapshotSeq, () => {
       // Refresh the library thumbnail at most every few seconds.
       if (Date.now() - lastThumb < 3000 || !store.doc.pages[0]) return;
@@ -234,8 +240,17 @@ function EditorInner({
       off();
       window.removeEventListener('pagehide', flush);
       document.removeEventListener('visibilitychange', onVis);
-      if (store.doc.pages[0]) void updateMeta(store.doc.id, { thumbnail: renderThumbnail(store.doc.pages[0], store.doc.id) });
-      void persister.dispose();
+      openEditors.set(docId, (openEditors.get(docId) ?? 1) - 1);
+      const thumbnail = store.doc.pages[0] ? renderThumbnail(store.doc.pages[0], docId) : undefined;
+      afterEditorClose(
+        (async () => {
+          if (thumbnail) await updateMeta(docId, { thumbnail });
+          await persister.dispose();
+          // StrictMode remounts at once; settle the quick note only if the notebook really closed.
+          await new Promise((r) => setTimeout(r, 0));
+          if (!openEditors.get(docId)) await settleQuicknote(docId, store.doc);
+        })(),
+      );
     };
   }, [store, snapshotSeq]);
 
@@ -639,8 +654,10 @@ function EditorInner({
 
   const rename = (title: string) => {
     const t = title.trim() || 'Untitled';
-    setMeta((m) => ({ ...m, title: t }));
-    void updateMeta(meta.id, { title: t });
+    if (t === meta.title) return;
+    // Naming a quick note means keeping it, even before anything is written in it.
+    setMeta((m) => ({ ...m, title: t, quicknote: undefined }));
+    void updateMeta(meta.id, { title: t, quicknote: undefined });
   };
 
   const [pdfExportOpen, setPdfExportOpen] = useState(false);

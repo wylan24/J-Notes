@@ -8,6 +8,8 @@ import { childFolders, countInFolder, effectiveFolder } from '../core/folders';
 import { NATURAL_DIR, normalizeLibraryPrefs, sortFolders, sortNotebooks, type LibraryPrefs, type SortKey } from '../core/librarySort';
 import { Breadcrumbs, FolderCard, FolderDialog, FolderPicker } from './Folders';
 import { fromFile } from '../io/notebookFile';
+import { quicknoteTitle } from '../core/quicknote';
+import { editorClosed, sweepQuicknotes } from '../storage/quicknotes';
 import { pagesFromFiles, titleFromFileName } from '../io/importPages';
 import { Icon } from './icons';
 
@@ -84,11 +86,44 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
   const fileInput = useRef<HTMLInputElement>(null);
 
   const refresh = () =>
-    void Promise.all([listNotebooks(), listFolders()]).then(([n, f]) => {
-      setFolders(f);
-      setItems(n);
-    });
-  useEffect(refresh, []);
+    // Wait for a notebook that was just closed to finish saving (and an empty quick note to go).
+    void editorClosed()
+      .then(() => Promise.all([listNotebooks(), listFolders()]))
+      .then(([n, f]) => {
+        setFolders(f);
+        setItems(n);
+      });
+  useEffect(() => {
+    refresh();
+    // Quick notes left empty in a tab that was closed rather than exited.
+    void editorClosed()
+      .then(() => sweepQuicknotes())
+      .then((removed) => removed && refresh());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** A blank notebook straight into the editor; thrown away if left empty. */
+  const quicknote = async () => {
+    const id = newId();
+    const now = new Date();
+    await createNotebook(
+      {
+        id,
+        title: quicknoteTitle(now),
+        cover: COVERS[0],
+        template: 'ruled',
+        createdAt: now.getTime(),
+        updatedAt: now.getTime(),
+        favourite: false,
+        trashedAt: null,
+        pageCount: 1,
+        quicknote: true,
+        ...(folder && folders.some((f) => f.id === folder) ? { folderId: folder } : {}),
+      },
+      { id, pages: [blankPage(newId(), { template: 'ruled', size: sizeFor('a4', 'portrait'), paper: 'white' })] },
+    );
+    onOpen(id);
+  };
 
   const folderIds = new Set(folders.map((f) => f.id));
   // A remembered folder that has since been deleted falls back to the top level.
@@ -221,6 +256,9 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
               <Icon name="folder" /> New folder
             </button>
           )}
+          <button className="btn ghost" onClick={() => void quicknote()} title="A blank notebook, discarded if you leave it empty">
+            <Icon name="pencil" /> Quick note
+          </button>
           <button className="btn primary" onClick={() => setCreating(true)}>
             <Icon name="plus" /> New notebook
           </button>

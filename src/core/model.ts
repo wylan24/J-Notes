@@ -223,6 +223,11 @@ export interface NotebookMeta {
   thumbnail?: string;
   /** The folder it is filed in; absent for the top level (and for notebooks from before folders). */
   folderId?: string;
+  /**
+   * Made with Quick note and not yet kept: discarded when left empty. Cleared once it is left
+   * with content or renamed.
+   */
+  quicknote?: true;
 }
 
 /** A library folder. Folders nest through `parentId`; null is the top level. */
