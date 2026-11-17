@@ -1,4 +1,6 @@
-import type { NotebookDoc, NotebookMeta } from '../core/model';
+import { normalizeDoc, type NotebookDoc, type NotebookMeta } from '../core/model';
+import type { Session } from '../core/timer';
+import type { SavedElement } from '../core/elements';
 import { replay, type DocEvent } from '../core/ops';
 
 /**
@@ -7,17 +9,31 @@ import { replay, type DocEvent } from '../core/ops';
  *  meta       NotebookMeta projection for the library grid
  *  events     append-only op log, key [docId, seq]
  *  snapshots  periodic materialised doc + the seq it reflects (log compaction)
+ *  blobs      image and audio bytes, key [docId, id]; page items refer to them by id
+ *  sessions   timer and stopwatch history (not tied to a notebook's lifetime)
+ *  elements   saved selections shared by all notebooks, each with copies of its photos
  *
  * Loading a notebook = latest snapshot + replay of events after its seq.
  */
 
 const DB_NAME = 'jnotes';
-const DB_VERSION = 1;
+const DB_VERSION = 4;
 
 interface Snapshot {
   docId: string;
   seq: number;
   doc: NotebookDoc;
+}
+
+/**
+ * Binary content stored outside the document, so the op log and snapshots stay small.
+ * Bytes are kept as an ArrayBuffer rather than a Blob, which some Safari versions could not store.
+ */
+export interface StoredBlob {
+  docId: string;
+  id: string;
+  type: string;
+  bytes: ArrayBuffer;
 }
 
 let dbPromise: Promise<IDBDatabase> | null = null;
@@ -40,11 +56,16 @@ function done(tx: IDBTransaction): Promise<void> {
 export function openDb(): Promise<IDBDatabase> {
   dbPromise ??= new Promise((resolve, reject) => {
     const r = indexedDB.open(DB_NAME, DB_VERSION);
-    r.onupgradeneeded = () => {
+    r.onupgradeneeded = (e) => {
       const db = r.result;
-      db.createObjectStore('meta', { keyPath: 'id' });
-      db.createObjectStore('events', { keyPath: ['docId', 'seq'] });
-      db.createObjectStore('snapshots', { keyPath: 'docId' });
+      if (e.oldVersion < 1) {
+        db.createObjectStore('meta', { keyPath: 'id' });
+        db.createObjectStore('events', { keyPath: ['docId', 'seq'] });
+        db.createObjectStore('snapshots', { keyPath: 'docId' });
+      }
+      if (e.oldVersion < 2) db.createObjectStore('blobs', { keyPath: ['docId', 'id'] });
+      if (e.oldVersion < 3) db.createObjectStore('sessions', { keyPath: 'id' }).createIndex('endedAt', 'endedAt');
+      if (e.oldVersion < 4) db.createObjectStore('elements', { keyPath: 'id' });
     };
     r.onsuccess = () => resolve(r.result);
     r.onerror = () => reject(r.error);
@@ -58,6 +79,8 @@ export function resetDbForTests(): void {
 }
 
 const eventRange = (docId: string, afterSeq = 0) => IDBKeyRange.bound([docId, afterSeq + 1], [docId, Infinity]);
+// Every [docId, id] key with this docId: string ids sort below the empty array.
+const blobRange = (docId: string) => IDBKeyRange.bound([docId, ''], [docId, []]);
 
 export async function listNotebooks(): Promise<NotebookMeta[]> {
   const db = await openDb();
@@ -70,12 +93,35 @@ export async function getMeta(id: string): Promise<NotebookMeta | undefined> {
   return req(db.transaction('meta').objectStore('meta').get(id) as IDBRequest<NotebookMeta | undefined>);
 }
 
-export async function createNotebook(meta: NotebookMeta, doc: NotebookDoc): Promise<void> {
+/** Create a notebook, with any blobs its items refer to (from an import), in one transaction. */
+export async function createNotebook(meta: NotebookMeta, doc: NotebookDoc, blobs: StoredBlob[] = []): Promise<void> {
   const db = await openDb();
-  const tx = db.transaction(['meta', 'snapshots'], 'readwrite');
+  const tx = db.transaction(['meta', 'snapshots', 'blobs'], 'readwrite');
   tx.objectStore('meta').put(meta);
   tx.objectStore('snapshots').put({ docId: doc.id, seq: 0, doc } satisfies Snapshot);
+  for (const b of blobs) tx.objectStore('blobs').put({ ...b, docId: doc.id } satisfies StoredBlob);
   await done(tx);
+}
+
+export async function putBlob(blob: StoredBlob): Promise<void> {
+  const db = await openDb();
+  const tx = db.transaction('blobs', 'readwrite');
+  tx.objectStore('blobs').put(blob);
+  await done(tx);
+}
+
+export async function getBlob(docId: string, id: string): Promise<StoredBlob | undefined> {
+  const db = await openDb();
+  return req(db.transaction('blobs').objectStore('blobs').get([docId, id]) as IDBRequest<StoredBlob | undefined>);
+}
+
+/** The notebook's blobs, optionally limited to the given ids (missing ones are skipped). */
+export async function getBlobs(docId: string, ids?: Iterable<string>): Promise<StoredBlob[]> {
+  const db = await openDb();
+  const all = await req(db.transaction('blobs').objectStore('blobs').getAll(blobRange(docId)) as IDBRequest<StoredBlob[]>);
+  if (!ids) return all;
+  const want = new Set(ids);
+  return all.filter((b) => want.has(b.id));
 }
 
 export async function updateMeta(id: string, patch: Partial<NotebookMeta>): Promise<void> {
@@ -93,7 +139,8 @@ export async function loadDocument(id: string): Promise<{ doc: NotebookDoc; seq:
   const snap = await req(tx.objectStore('snapshots').get(id) as IDBRequest<Snapshot | undefined>);
   if (!snap) throw new Error(`Notebook ${id} not found`);
   const events = await req(tx.objectStore('events').getAll(eventRange(id, snap.seq)) as IDBRequest<DocEvent[]>);
-  const doc = replay(snap.doc, events);
+  // Snapshots written before page items existed are normalised; replay handles old page.added events.
+  const doc = replay(normalizeDoc(snap.doc), events);
   const seq = events.length ? events[events.length - 1].seq : snap.seq;
   return { doc, seq, snapshotSeq: snap.seq };
 }
@@ -121,9 +168,77 @@ export async function compact(docId: string, doc: NotebookDoc, seq: number): Pro
 
 export async function deleteNotebook(id: string): Promise<void> {
   const db = await openDb();
-  const tx = db.transaction(['meta', 'events', 'snapshots'], 'readwrite');
+  const tx = db.transaction(['meta', 'events', 'snapshots', 'blobs'], 'readwrite');
   tx.objectStore('meta').delete(id);
   tx.objectStore('snapshots').delete(id);
+  tx.objectStore('blobs').delete(blobRange(id));
   tx.objectStore('events').delete(IDBKeyRange.bound([id, 0], [id, Infinity]));
   await done(tx);
 }
+
+// --- Timer history ------------------------------------------------------------------
+
+export async function addSession(session: Session): Promise<void> {
+  const db = await openDb();
+  const tx = db.transaction('sessions', 'readwrite');
+  tx.objectStore('sessions').put(session);
+  await done(tx);
+}
+
+/** Most recent first. */
+export async function listSessions(limit = 100): Promise<Session[]> {
+  const db = await openDb();
+  const index = db.transaction('sessions').objectStore('sessions').index('endedAt');
+  const out: Session[] = [];
+  await new Promise<void>((resolve, reject) => {
+    const r = index.openCursor(null, 'prev');
+    r.onsuccess = () => {
+      const c = r.result;
+      if (!c || out.length >= limit) return resolve();
+      out.push(c.value as Session);
+      c.continue();
+    };
+    r.onerror = () => reject(r.error);
+  });
+  return out;
+}
+
+export async function clearSessions(): Promise<void> {
+  const db = await openDb();
+  const tx = db.transaction('sessions', 'readwrite');
+  tx.objectStore('sessions').clear();
+  await done(tx);
+}
+
+// --- Elements library -----------------------------------------------------------------
+
+export async function saveElement(el: SavedElement): Promise<void> {
+  const db = await openDb();
+  const tx = db.transaction('elements', 'readwrite');
+  tx.objectStore('elements').put(el);
+  await done(tx);
+}
+
+/** Newest first. */
+export async function listElements(): Promise<SavedElement[]> {
+  const db = await openDb();
+  const all = await req(db.transaction('elements').objectStore('elements').getAll() as IDBRequest<SavedElement[]>);
+  return all.sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export async function renameElement(id: string, name: string): Promise<void> {
+  const db = await openDb();
+  const tx = db.transaction('elements', 'readwrite');
+  const store = tx.objectStore('elements');
+  const cur = await req(store.get(id) as IDBRequest<SavedElement | undefined>);
+  if (cur) store.put({ ...cur, name });
+  await done(tx);
+}
+
+export async function deleteElement(id: string): Promise<void> {
+  const db = await openDb();
+  const tx = db.transaction('elements', 'readwrite');
+  tx.objectStore('elements').delete(id);
+  await done(tx);
+}
+

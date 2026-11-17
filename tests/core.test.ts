@@ -16,7 +16,7 @@ const stroke = (id: string, pts: [number, number][], width = 2): Stroke => ({
 
 const baseDoc = (): NotebookDoc => ({
   id: 'doc',
-  pages: [{ id: 'p1', template: 'blank', strokes: [stroke('a', [[0, 0], [10, 0]]), stroke('b', [[0, 20], [10, 20]]), stroke('c', [[0, 40], [10, 40]])] }],
+  pages: [{ id: 'p1', template: 'blank', strokes: [stroke('a', [[0, 0], [10, 0]]), stroke('b', [[0, 20], [10, 20]]), stroke('c', [[0, 40], [10, 40]])], items: [] }],
 });
 
 describe('ops', () => {
@@ -24,7 +24,7 @@ describe('ops', () => {
     const doc = baseDoc();
     const page = doc.pages[0];
     const ops: DocOp[] = [
-      { type: 'page.added', index: 1, page: { id: 'p2', template: 'grid', strokes: [] } },
+      { type: 'page.added', index: 1, page: { id: 'p2', template: 'grid', strokes: [], items: [] } },
       { type: 'strokes.added', pageId: 'p1', strokes: [stroke('d', [[5, 5], [6, 6]])] },
       removeStrokesOp(page, ['a', 'c'])!,
       { type: 'strokes.translated', pageId: 'p1', ids: ['b'], dx: 5, dy: -3 },
@@ -86,7 +86,7 @@ describe('DocumentStore', () => {
     const log: Parameters<typeof replay>[1] = [];
     store.onEvents((e) => log.push(...e));
     store.dispatch([removeStrokesOp(store.doc.pages[0], ['a'])!]);
-    store.dispatch([{ type: 'page.added', index: 1, page: { id: 'p2', template: 'ruled', strokes: [] } }]);
+    store.dispatch([{ type: 'page.added', index: 1, page: { id: 'p2', template: 'ruled', strokes: [], items: [] } }]);
     store.undo();
     store.dispatch([{ type: 'strokes.translated', pageId: 'p1', ids: ['c'], dx: 3, dy: 3 }]);
     expect(replay(initial, log)).toEqual(store.doc);

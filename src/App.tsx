@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Library } from './ui/Library';
 import { Editor } from './ui/Editor';
+import { TimerWatcher } from './ui/Timer';
 
 // Hash routing: #/ = library, #/n/<id> = notebook. Keeps deep links working
 // on any static host without server rewrites.
@@ -17,9 +18,10 @@ export function App() {
     return () => window.removeEventListener('hashchange', on);
   }, []);
 
-  return docId ? (
-    <Editor id={docId} onExit={() => (location.hash = '#/')} />
-  ) : (
-    <Library onOpen={(id) => (location.hash = `#/n/${id}`)} />
+  return (
+    <>
+      {docId ? <Editor id={docId} onExit={() => (location.hash = '#/')} /> : <Library onOpen={(id) => (location.hash = `#/n/${id}`)} />}
+      <TimerWatcher />
+    </>
   );
 }

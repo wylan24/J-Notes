@@ -18,7 +18,9 @@ function resampleTagged(points: InputPoint[], step: number): { pt: InputPoint; o
     const n = Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / step);
     for (let k = 1; k < n; k++) {
       const t = k / n;
-      out.push({ pt: { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, p: a.p + (b.p - a.p) * t }, orig: false });
+      const pt: InputPoint = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, p: a.p + (b.p - a.p) * t };
+      if (a.t !== undefined && b.t !== undefined) pt.t = a.t + (b.t - a.t) * t;
+      out.push({ pt, orig: false });
     }
     out.push({ pt: b, orig: true });
   }

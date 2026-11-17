@@ -38,7 +38,7 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
     const now = Date.now();
     await createNotebook(
       { id, title: title.trim() || 'Untitled notebook', cover, template, createdAt: now, updatedAt: now, favourite: false, trashedAt: null, pageCount: 1 },
-      { id, pages: [{ id: newId(), template, strokes: [] }] },
+      { id, pages: [{ id: newId(), template, strokes: [], items: [] }] },
     );
     onOpen(id);
   };
@@ -50,8 +50,8 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
 
   const importFile = async (file: File) => {
     try {
-      const { meta, doc } = fromFile(JSON.parse(await file.text()));
-      await createNotebook(meta, doc);
+      const { meta, doc, blobs } = fromFile(JSON.parse(await file.text()));
+      await createNotebook(meta, doc, blobs);
       refresh();
     } catch (e) {
       alert(`Could not import: ${(e as Error).message}`);

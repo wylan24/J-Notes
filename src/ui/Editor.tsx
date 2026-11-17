@@ -2,20 +2,46 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExter
 import { PAGE_H, type EraseMode, type InkTool, type NotebookMeta, type PenStyle, type ToolKind } from '../core/model';
 import { newId } from '../core/ids';
 import { DocumentStore } from '../core/store';
-import { getMeta, loadDocument, updateMeta } from '../storage/db';
+import { deleteSelectionOps } from '../core/selection';
+import { getBlobs, getMeta, listElements, loadDocument, putBlob, saveElement, updateMeta } from '../storage/db';
 import { Persister, type SaveStatus } from '../storage/persister';
-import { downloadBlob, exportPagePng, renderThumbnail } from '../render/page';
-import { toFile } from '../io/notebookFile';
+import { downloadBlob, exportPagePng, renderContentThumbnail, renderThumbnail } from '../render/page';
+import { imageResolver, primeImage } from '../render/items';
+import { isImageFile, prepareImage } from '../io/images';
+import { FONTS, newImage, type FontKey, type TextStyle } from '../core/items';
+import type { PageItem } from '../core/model';
+import { referencedBlobIds, toFile } from '../io/notebookFile';
 import { PageView, type GestureState, type Selection, type ToolState } from './PageView';
 import { Icon } from './icons';
+import { TimerButton } from './Timer';
+import { ElementsButton } from './Elements';
+import { ITEM_INFO, OverflowMenu, ToolbarSettings } from './ToolbarSettings';
+import { normalizePrefs, visibleItems, type ToolbarItem, type ToolbarPrefs } from '../core/toolbarPrefs';
+import { AudioBar, type AudioApi } from './AudioBar';
+import { recordingSupported, stopRecording, useRecorderState } from './recorder';
+import type { Recording } from '../core/model';
+import { defaultElementName, elementBlobIds, makeElementContent, placeElement, type SavedElement } from '../core/elements';
+import { RulerOverlay } from './Ruler';
+import { ZoomWindow } from './ZoomWindow';
+import { rulerEdges, type Ruler } from '../core/ruler';
+import { defaultTarget, type ZoomTarget } from '../core/zoomWindow';
 
 const PAGE_GAP = 28;
+/** Width of one toolbar icon button with its gap, and of the fixed buttons around the customisable ones. */
+const TOOLBAR_ITEM_W = 38;
+const TOOLBAR_FIXED_W = 3 * TOOLBAR_ITEM_W + 2 * 13;
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 4;
 
 const PEN_COLORS = ['#1c1c1e', '#2557c7', '#d1342f', '#1d8a4a', '#8a4fd8'];
+const STICKY_COLORS = ['#ffe680', '#ffc2d6', '#b8e6c1', '#b9dcff', '#ffd3a6'];
+const TEXT_SIZES = [{ size: 14, label: 'S' }, { size: 18, label: 'M' }, { size: 28, label: 'L' }];
+const FONT_LABELS: Record<FontKey, string> = { sans: 'Sans', serif: 'Serif', mono: 'Mono' };
+const DEFAULT_TEXT: TextStyle = { font: 'sans', size: 18, color: PEN_COLORS[0] };
 const HIGHLIGHT_COLORS = ['#ffd84d', '#9ff09a', '#ffb0d0', '#9fd4ff'];
-const WIDTHS: Record<InkTool, number[]> = { pen: [1.8, 3, 5], highlighter: [12, 18, 26] };
+/** Tools whose options are a colour and a width. */
+type ColorTool = InkTool | 'shapes';
+const WIDTHS: Record<ColorTool, number[]> = { pen: [1.8, 3, 5], highlighter: [12, 18, 26], shapes: [1.8, 3, 5] };
 const PEN_STYLES: { style: PenStyle; label: string }[] = [
   { style: 'fountain', label: 'Fountain pen' },
   { style: 'ball', label: 'Ball pen' },
@@ -25,14 +51,18 @@ const ERASER_SIZES = [6, 12, 22];
 const TOOLS: { kind: ToolKind; label: string; key: string }[] = [
   { kind: 'pen', label: 'Pen', key: 'P' },
   { kind: 'highlighter', label: 'Highlighter', key: 'H' },
+  { kind: 'shapes', label: 'Shapes', key: 'S' },
   { kind: 'eraser', label: 'Eraser', key: 'E' },
   { kind: 'lasso', label: 'Lasso', key: 'L' },
+  { kind: 'text', label: 'Text', key: 'T' },
+  { kind: 'sticky', label: 'Sticky note', key: 'N' },
   { kind: 'laser', label: 'Laser pointer', key: 'K' },
 ];
 
 interface InkSettings {
   pen: { color: string; width: number; style: PenStyle; sharpness: number };
   highlighter: { color: string; width: number; straight: boolean };
+  shapes: { color: string; width: number };
 }
 interface EraserSettings {
   size: number;
@@ -43,6 +73,7 @@ interface EraserSettings {
 const DEFAULT_INK: InkSettings = {
   pen: { color: PEN_COLORS[0], width: WIDTHS.pen[1], style: 'fountain', sharpness: 0.5 },
   highlighter: { color: HIGHLIGHT_COLORS[0], width: WIDTHS.highlighter[1], straight: false },
+  shapes: { color: PEN_COLORS[0], width: WIDTHS.shapes[1] },
 };
 const DEFAULT_ERASER: EraserSettings = { size: ERASER_SIZES[1], mode: 'stroke', highlighterOnly: false };
 
@@ -111,13 +142,54 @@ function EditorInner({
   // Merge stored prefs over defaults so settings added later get sane values.
   const [ink, setInk] = useState<InkSettings>(() => {
     const saved = readPref<Partial<InkSettings>>('jnotes.ink', {});
-    return { pen: { ...DEFAULT_INK.pen, ...saved.pen }, highlighter: { ...DEFAULT_INK.highlighter, ...saved.highlighter } };
+    return {
+      pen: { ...DEFAULT_INK.pen, ...saved.pen },
+      highlighter: { ...DEFAULT_INK.highlighter, ...saved.highlighter },
+      shapes: { ...DEFAULT_INK.shapes, ...saved.shapes },
+    };
   });
   const [eraser, setEraser] = useState<EraserSettings>(() => ({ ...DEFAULT_ERASER, ...readPref<Partial<EraserSettings>>('jnotes.eraser', {}) }));
   const setPen = (patch: Partial<InkSettings['pen']>) => setInk((v) => ({ ...v, pen: { ...v.pen, ...patch } }));
   const setHighlighter = (patch: Partial<InkSettings['highlighter']>) => setInk((v) => ({ ...v, highlighter: { ...v.highlighter, ...patch } }));
-  const setInkTool = (t: InkTool, patch: { color?: string; width?: number }) => (t === 'pen' ? setPen(patch) : setHighlighter(patch));
+  const setInkTool = (t: ColorTool, patch: { color?: string; width?: number }) => setInk((v) => ({ ...v, [t]: { ...v[t], ...patch } }));
   const [penOnly, setPenOnly] = useState(() => readPref('jnotes.penOnly', false));
+  const [textStyle, setTextStyle] = useState<TextStyle>(() => ({ ...DEFAULT_TEXT, ...readPref<Partial<TextStyle>>('jnotes.text', {}) }));
+  const [stickyColor, setStickyColor] = useState(() => readPref('jnotes.stickyColor', STICKY_COLORS[0]));
+  const photoInput = useRef<HTMLInputElement>(null);
+  const [toolbarPrefs, setToolbarPrefs] = useState<ToolbarPrefs>(() => normalizePrefs(readPref<unknown>('jnotes.toolbar', null)));
+  const [customising, setCustomising] = useState(false);
+  // Buttons that don't fit on one toolbar row go into a "More" menu.
+  const toolbarRef = useRef<HTMLElement>(null);
+  const leftGroupRef = useRef<HTMLDivElement>(null);
+  const rightGroupRef = useRef<HTMLDivElement>(null);
+  const [itemRoom, setItemRoom] = useState(Infinity);
+  useLayoutEffect(() => {
+    const tb = toolbarRef.current;
+    if (!tb) return;
+    const measure = () => {
+      const l = leftGroupRef.current?.offsetWidth ?? 0;
+      const r = rightGroupRef.current?.offsetWidth ?? 0;
+      const cs = getComputedStyle(tb);
+      const inner = tb.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      // Group gaps, then undo, redo, two dividers and the Customise button.
+      setItemRoom(inner - l - r - 2 * 8 - TOOLBAR_FIXED_W);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(tb);
+    return () => ro.disconnect();
+  }, []);
+  // Precision tools. The ruler is placed in the canvas area's coordinates and stays put while pages scroll.
+  const areaRef = useRef<HTMLDivElement>(null);
+  const [ruler, setRuler] = useState<Ruler | null>(null);
+  const rulerRef = useRef(ruler);
+  rulerRef.current = ruler;
+  const [zoomTarget, setZoomTarget] = useState<ZoomTarget | null>(null);
+  // Audio: the bar's open state, where playback is (for fading ink), and a handle to seek it from ink.
+  const [audioOpen, setAudioOpen] = useState(false);
+  const [playback, setPlayback] = useState<{ rec: string; t: number } | null>(null);
+  const audioApi = useRef<AudioApi | null>(null);
+  const recState = useRecorderState();
   const [selection, setSelection] = useState<Selection | null>(null);
   const [status, setStatus] = useState<SaveStatus>('saved');
   const [currentPage, setCurrentPage] = useState(0);
@@ -129,6 +201,9 @@ function EditorInner({
   useEffect(() => writePref('jnotes.ink', ink), [ink]);
   useEffect(() => writePref('jnotes.eraser', eraser), [eraser]);
   useEffect(() => writePref('jnotes.penOnly', penOnly), [penOnly]);
+  useEffect(() => writePref('jnotes.text', textStyle), [textStyle]);
+  useEffect(() => writePref('jnotes.toolbar', toolbarPrefs), [toolbarPrefs]);
+  useEffect(() => writePref('jnotes.stickyColor', stickyColor), [stickyColor]);
   useEffect(() => writePref('jnotes.zoom', zoom), [zoom]);
 
   // --- Persistence ------------------------------------------------------------
@@ -140,7 +215,7 @@ function EditorInner({
       // Refresh the library thumbnail at most every few seconds.
       if (Date.now() - lastThumb < 3000 || !store.doc.pages[0]) return;
       lastThumb = Date.now();
-      void updateMeta(store.doc.id, { thumbnail: renderThumbnail(store.doc.pages[0]) });
+      void updateMeta(store.doc.id, { thumbnail: renderThumbnail(store.doc.pages[0], imageResolver(store.doc.id)) });
     });
     const off = persister.onStatus(setStatus);
     const flush = () => void persister.flush();
@@ -151,7 +226,7 @@ function EditorInner({
       off();
       window.removeEventListener('pagehide', flush);
       document.removeEventListener('visibilitychange', onVis);
-      if (store.doc.pages[0]) void updateMeta(store.doc.id, { thumbnail: renderThumbnail(store.doc.pages[0]) });
+      if (store.doc.pages[0]) void updateMeta(store.doc.id, { thumbnail: renderThumbnail(store.doc.pages[0], imageResolver(store.doc.id)) });
       void persister.dispose();
     };
   }, [store, snapshotSeq]);
@@ -241,7 +316,7 @@ function EditorInner({
   };
 
   // --- Commands ---------------------------------------------------------------
-  const inkTool = toolKind === 'pen' || toolKind === 'highlighter' ? toolKind : null;
+  const inkTool: ColorTool | null = toolKind === 'pen' || toolKind === 'highlighter' || toolKind === 'shapes' ? toolKind : null;
   const tool: ToolState = {
     kind: toolKind,
     color: inkTool ? ink[inkTool].color : '#000',
@@ -252,11 +327,188 @@ function EditorInner({
     eraserPx: eraser.size,
     eraseMode: eraser.mode,
     highlighterOnly: eraser.highlighterOnly,
+    text: textStyle,
+    stickyColor,
   };
+
+  // --- Ruler and zoom window --------------------------------------------------------------
+  const toggleRuler = () => {
+    if (rulerRef.current) return setRuler(null);
+    const area = areaRef.current;
+    const w = area?.clientWidth ?? 800;
+    const h = area?.clientHeight ?? 600;
+    setRuler({ cx: w / 2, cy: h / 2, angle: 0, length: Math.min(w * 0.9, 1100), width: 64 });
+  };
+  /** The ruler's edges in client coordinates, for PageView to snap strokes to. */
+  const rulerEdgesClient = useCallback(() => {
+    const r = rulerRef.current;
+    const area = areaRef.current?.getBoundingClientRect();
+    return r && area ? rulerEdges({ ...r, cx: r.cx + area.left, cy: r.cy + area.top }) : null;
+  }, []);
+
+  const toggleZoomWindow = () => {
+    if (zoomTarget) return setZoomTarget(null);
+    const page = store.doc.pages[currentPage];
+    if (page) setZoomTarget(defaultTarget(page.id, page.template));
+  };
+  const zoomPage = zoomTarget ? doc.pages.find((p) => p.id === zoomTarget.pageId) : undefined;
+  // The page under the zoom window was deleted.
+  useEffect(() => {
+    if (zoomTarget && !zoomPage) setZoomTarget(null);
+  }, [zoomTarget, zoomPage]);
+  // Keep the target box in view as it moves down the page.
+  useEffect(() => {
+    const el = scrollerRef.current?.querySelector('.zoom-target');
+    const view = scrollerRef.current?.getBoundingClientRect();
+    if (!el || !view) return;
+    const r = el.getBoundingClientRect();
+    if (r.top < view.top || r.bottom > view.bottom || r.left < view.left || r.right > view.right) el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [zoomTarget]);
+
+  // --- Photos: file picker, paste and drag-and-drop ------------------------------------
+  /**
+   * Page and page point to place things at: the drop point, or the middle of the visible part of the
+   * current page. With `requirePage`, a drop point off the pages gives null instead.
+   */
+  const photoTarget = (clientX?: number, clientY?: number, requirePage = false): { pageId: string; x: number; y: number } | null => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return null;
+    let el = clientX !== undefined && clientY !== undefined ? document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>('[data-page-id]') : null;
+    if (!el && requirePage && clientX !== undefined) return null;
+    const page = store.doc.pages[currentPage];
+    if (!el && page) el = scroller.querySelector<HTMLElement>(`[data-page-id="${page.id}"]`);
+    if (!el?.dataset.pageId) return null;
+    const r = el.getBoundingClientRect();
+    if (clientX === undefined || clientY === undefined || !el.contains(document.elementFromPoint(clientX, clientY))) {
+      const v = scroller.getBoundingClientRect();
+      clientX = (Math.max(r.left, v.left) + Math.min(r.right, v.right)) / 2;
+      clientY = (Math.max(r.top, v.top) + Math.min(r.bottom, v.bottom)) / 2;
+    }
+    return { pageId: el.dataset.pageId, x: (clientX - r.left) / zoomRef.current, y: (clientY - r.top) / zoomRef.current };
+  };
+
+  const insertPhotos = async (files: File[], clientX?: number, clientY?: number) => {
+    const images = files.filter(isImageFile);
+    const target = photoTarget(clientX, clientY);
+    if (!images.length || !target) return;
+    const items: PageItem[] = [];
+    for (const [i, file] of images.entries()) {
+      try {
+        const prepared = await prepareImage(file);
+        const blobId = newId();
+        await putBlob({ docId: store.doc.id, id: blobId, type: prepared.type, bytes: prepared.bytes });
+        primeImage(store.doc.id, blobId, prepared.img);
+        // Several photos at once are fanned out so they don't stack exactly.
+        items.push(newImage(blobId, prepared.width, prepared.height, { x: target.x + i * 24, y: target.y + i * 24 }));
+      } catch (e) {
+        alert(`Could not add ${file.name || 'the image'}: ${(e as Error).message}`);
+      }
+    }
+    if (!items.length) return;
+    store.dispatch([{ type: 'items.added', pageId: target.pageId, items }]);
+    setToolKind('lasso');
+    setSelection({ pageId: target.pageId, strokeIds: [], itemIds: items.map((it) => it.id) });
+  };
+  // --- Audio recording -----------------------------------------------------------------------
+  const recordings = doc.recordings ?? [];
+  /** Stop the recorder and add the recording to this notebook (one undoable step). */
+  const finishRecording = async (): Promise<string | null> => {
+    const result = await stopRecording();
+    if (!result || result.durationMs < 500) return null;
+    const blobId = newId();
+    await putBlob({ docId: store.doc.id, id: blobId, type: result.mimeType, bytes: await result.blob.arrayBuffer() });
+    const rec: Recording = {
+      id: result.id,
+      blobId,
+      name: `Recording ${(store.doc.recordings?.length ?? 0) + 1}`,
+      createdAt: Date.now(),
+      durationMs: result.durationMs,
+      mimeType: result.mimeType,
+    };
+    store.dispatch([{ type: 'recording.added', recording: rec }]);
+    return rec.id;
+  };
+  const deleteRecording = (rec: Recording) => {
+    const index = (store.doc.recordings ?? []).findIndex((r) => r.id === rec.id);
+    if (index >= 0) store.dispatch([{ type: 'recording.removed', recording: rec, index }]);
+  };
+  // Leaving mid-recording would lose it: ask the browser to warn, and save it when going back to the library.
+  useEffect(() => {
+    if (recState === 'idle') return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [recState]);
+  const exit = async () => {
+    if (recState !== 'idle') await finishRecording();
+    onExit();
+  };
+  const seekInk = useCallback((rec: string, t: number) => audioApi.current?.seek(rec, t), []);
+
+  // --- Elements ---------------------------------------------------------------------------
+  const [elementsVersion, setElementsVersion] = useState(0);
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(null), 2600);
+    return () => clearTimeout(t);
+  }, [notice]);
+
+  const saveAsElement = async (sel: Selection) => {
+    const page = store.doc.pages.find((p) => p.id === sel.pageId);
+    const content = page && makeElementContent(page, sel);
+    if (!content) return;
+    try {
+      const blobs = (await getBlobs(store.doc.id, elementBlobIds(content))).map(({ id, type, bytes }) => ({ id, type, bytes }));
+      const count = (await listElements()).length;
+      const el: SavedElement = {
+        ...content,
+        id: newId(),
+        name: defaultElementName(content, count),
+        createdAt: Date.now(),
+        thumbnail: renderContentThumbnail(content, imageResolver(store.doc.id)),
+        blobs,
+      };
+      await saveElement(el);
+      setElementsVersion((v) => v + 1);
+      setNotice(`Saved “${el.name}” to Elements`);
+    } catch (e) {
+      alert(`Could not save the element: ${(e as Error).message}`);
+    }
+  };
+
+  const placeElementAt = async (el: SavedElement, clientX?: number, clientY?: number): Promise<boolean> => {
+    const target = photoTarget(clientX, clientY, clientX !== undefined);
+    if (!target) return false;
+    // Photos are stored per notebook, so copy the element's into this one first.
+    for (const b of el.blobs) await putBlob({ docId: store.doc.id, ...b });
+    const placed = placeElement(el, target.pageId, target);
+    if (!placed.ops.length) return false;
+    store.dispatch(placed.ops);
+    setToolKind('lasso');
+    setSelection(placed.selection);
+    return true;
+  };
+
+  const insertPhotosRef = useRef(insertPhotos);
+  insertPhotosRef.current = insertPhotos;
+
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const t = e.target;
+      if (t instanceof HTMLTextAreaElement || (t instanceof HTMLInputElement && t.type === 'text')) return;
+      const files = [...(e.clipboardData?.files ?? [])].filter(isImageFile);
+      if (!files.length) return;
+      e.preventDefault();
+      void insertPhotosRef.current(files);
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, []);
 
   const addPage = () => {
     const index = Math.min(currentPage + 1, doc.pages.length);
-    store.dispatch([{ type: 'page.added', index, page: { id: newId(), template: meta.template, strokes: [] } }]);
+    store.dispatch([{ type: 'page.added', index, page: { id: newId(), template: meta.template, strokes: [], items: [] } }]);
     requestAnimationFrame(() => {
       const el = scrollerRef.current;
       if (el) el.scrollTo({ top: index * (PAGE_H * zoom + PAGE_GAP), behavior: 'smooth' });
@@ -266,7 +518,7 @@ function EditorInner({
   const deletePage = () => {
     const page = doc.pages[currentPage];
     if (!page || doc.pages.length <= 1) return;
-    if (page.strokes.length && !confirm(`Delete page ${currentPage + 1}? You can undo this.`)) return;
+    if ((page.strokes.length || page.items.length) && !confirm(`Delete page ${currentPage + 1}? You can undo this.`)) return;
     store.dispatch([{ type: 'page.removed', page, index: currentPage }]);
   };
 
@@ -276,15 +528,90 @@ function EditorInner({
     void updateMeta(meta.id, { title: t });
   };
 
-  const exportJson = () => {
-    const blob = new Blob([JSON.stringify(toFile(meta, doc))], { type: 'application/json' });
+  const exportJson = async () => {
+    const blobs = await getBlobs(doc.id, referencedBlobIds(doc));
+    const blob = new Blob([JSON.stringify(toFile(meta, doc, blobs))], { type: 'application/json' });
     downloadBlob(blob, `${meta.title}.jnotes.json`);
   };
 
+  // --- Toolbar ------------------------------------------------------------------
+  const visible = visibleItems(toolbarPrefs).filter((i) => i !== 'audio' || recordingSupported());
+  const allFit = visible.length * TOOLBAR_ITEM_W <= itemRoom;
+  // Leave room for the More button itself, and keep at least one item on the bar.
+  const shownCount = allFit ? visible.length : Math.max(1, Math.floor((itemRoom - TOOLBAR_ITEM_W) / TOOLBAR_ITEM_W));
+  const shownItems = visible.slice(0, shownCount);
+  const overflowItems = visible.slice(shownCount);
+
+  /** One customisable toolbar button, in the user's chosen order. */
+  const renderToolbarItem = (item: ToolbarItem) => {
+    const tool = TOOLS.find((t) => t.kind === item);
+    if (tool) {
+      const k = tool.kind;
+      return (
+        <button
+          key={k}
+          className={`icon-btn ${toolKind === k ? 'active' : ''}`}
+          aria-pressed={toolKind === k}
+          aria-label={tool.label}
+          title={`${tool.label} (${tool.key})`}
+          onClick={() => {
+            setToolKind(k);
+            setSelection(null);
+          }}
+        >
+          <Icon name={k} />
+        </button>
+      );
+    }
+    switch (item) {
+      case 'ruler':
+        return (
+          <button key={item} className={`icon-btn ${ruler ? 'active' : ''}`} aria-pressed={!!ruler} aria-label="Ruler" title="Ruler (R)" onClick={toggleRuler}>
+            <Icon name="ruler" />
+          </button>
+        );
+      case 'zoomWindow':
+        return (
+          <button key={item} className={`icon-btn ${zoomTarget ? 'active' : ''}`} aria-pressed={!!zoomTarget} aria-label="Zoom window" title="Zoom window (W)" onClick={toggleZoomWindow}>
+            <Icon name="zoomWindow" />
+          </button>
+        );
+      case 'photo':
+        return (
+          <button key={item} className="icon-btn" aria-label="Insert photo" title="Insert photo (or paste, or drop)" onClick={() => photoInput.current?.click()}>
+            <Icon name="image" />
+          </button>
+        );
+      case 'audio':
+        return recordingSupported() ? (
+          <button
+            key={item}
+            className={`icon-btn audio-btn ${audioOpen ? 'active' : ''} ${recState !== 'idle' ? 'is-recording' : ''}`}
+            aria-pressed={audioOpen}
+            aria-label={recState !== 'idle' ? 'Audio (recording)' : 'Audio recordings'}
+            title={ITEM_INFO.audio.label}
+            onClick={() => setAudioOpen(!audioOpen || recState !== 'idle')}
+          >
+            <Icon name="mic" />
+          </button>
+        ) : null;
+      case 'elements':
+        return <ElementsButton key={item} version={elementsVersion} onPlace={placeElementAt} />;
+      case 'timer':
+        return <TimerButton key={item} notebookId={meta.id} notebookTitle={meta.title} />;
+      default:
+        return null;
+    }
+  };
+
   // --- Keyboard ---------------------------------------------------------------
+  const toggleRulerRef = useRef(toggleRuler);
+  toggleRulerRef.current = toggleRuler;
+  const toggleZoomRef = useRef(toggleZoomWindow);
+  toggleZoomRef.current = toggleZoomWindow;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement && e.target.type !== 'range') return;
+      if ((e.target instanceof HTMLInputElement && e.target.type !== 'range') || e.target instanceof HTMLTextAreaElement) return;
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault();
@@ -304,13 +631,14 @@ function EditorInner({
         setZoomAt(1);
       } else if (!mod && selection && (e.key === 'Delete' || e.key === 'Backspace')) {
         const page = store.doc.pages.find((p) => p.id === selection.pageId);
-        const ids = new Set(selection.ids);
-        const strokes = page?.strokes.filter((s) => ids.has(s.id)) ?? [];
-        if (page && strokes.length)
-          store.dispatch([{ type: 'strokes.removed', pageId: page.id, strokes, indices: page.strokes.flatMap((s, i) => (ids.has(s.id) ? [i] : [])) }]);
+        if (page) store.dispatch(deleteSelectionOps(page, selection));
         setSelection(null);
       } else if (e.key === 'Escape') {
         setSelection(null);
+      } else if (!mod && e.key.toLowerCase() === 'r') {
+        toggleRulerRef.current();
+      } else if (!mod && e.key.toLowerCase() === 'w') {
+        toggleZoomRef.current();
       } else if (!mod) {
         const k = TOOLS.find((t) => t.key.toLowerCase() === e.key.toLowerCase())?.kind;
         if (k) {
@@ -332,9 +660,9 @@ function EditorInner({
 
   return (
     <div className="editor">
-      <header className="toolbar" data-no-gesture>
-        <div className="tb-group">
-          <button className="icon-btn" onClick={onExit} aria-label="Back to library" title="Library">
+      <header className="toolbar" data-no-gesture ref={toolbarRef}>
+        <div className="tb-group" ref={leftGroupRef}>
+          <button className="icon-btn" onClick={() => void exit()} aria-label="Back to library" title="Library">
             <Icon name="back" />
           </button>
           <input className="title-input" defaultValue={meta.title} onBlur={(e) => rename(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()} aria-label="Notebook title" />
@@ -351,26 +679,34 @@ function EditorInner({
             <Icon name="redo" />
           </button>
           <span className="divider" />
-          {TOOLS.map(({ kind: k, label, key }) => (
-            <button
-              key={k}
-              className={`icon-btn ${toolKind === k ? 'active' : ''}`}
-              aria-pressed={toolKind === k}
-              aria-label={label}
-              title={`${label} (${key})`}
-              onClick={() => {
-                setToolKind(k);
-                setSelection(null);
-              }}
-            >
-              <Icon name={k} />
-            </button>
-          ))}
+          {shownItems.map(renderToolbarItem)}
+          {overflowItems.length > 0 && <OverflowMenu items={overflowItems} render={renderToolbarItem} active={overflowItems.some((i) => i === toolKind)} />}
+          <span className="divider" />
+          <button className="icon-btn" aria-label="Customise toolbar" title="Customise toolbar" onClick={() => setCustomising(true)}>
+            <Icon name="sliders" />
+          </button>
+          <input
+            ref={photoInput}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={(e) => {
+              void insertPhotos([...(e.target.files ?? [])]);
+              e.target.value = '';
+            }}
+          />
         </div>
 
-        <div className="tb-group">
-          <button className={`chip ${penOnly ? 'active' : ''}`} onClick={() => setPenOnly(!penOnly)} title="When on, fingers scroll and only a stylus draws">
-            <Icon name="stylus" /> Stylus only
+        <div className="tb-group" ref={rightGroupRef}>
+          <button
+            className={`chip ${penOnly ? 'active' : ''}`}
+            aria-label="Stylus only"
+            aria-pressed={penOnly}
+            onClick={() => setPenOnly(!penOnly)}
+            title="Stylus only: when on, fingers scroll and only a stylus draws"
+          >
+            <Icon name="stylus" /> <span className="chip-label">Stylus only</span>
           </button>
           <button className="icon-btn" onClick={() => setZoomAt(zoom / 1.2)} aria-label="Zoom out">
             <Icon name="minus" />
@@ -393,14 +729,14 @@ function EditorInner({
               <Icon name="share" />
             </summary>
             <div className="menu-pop">
-              <button onClick={() => doc.pages[currentPage] && void exportPagePng(doc.pages[currentPage], `${meta.title} p${currentPage + 1}.png`)}>Export page as PNG</button>
-              <button onClick={exportJson}>Export notebook (.jnotes.json)</button>
+              <button onClick={() => doc.pages[currentPage] && void exportPagePng(doc.pages[currentPage], doc.id, `${meta.title} p${currentPage + 1}.png`)}>Export page as PNG</button>
+              <button onClick={() => void exportJson().catch((e: Error) => alert(`Export failed: ${e.message}`))}>Export notebook (.jnotes.json)</button>
             </div>
           </details>
         </div>
       </header>
 
-      {(inkTool || toolKind === 'eraser') && (
+      {(inkTool || toolKind === 'eraser' || toolKind === 'text' || toolKind === 'sticky') && (
         <div className="tool-options" data-no-gesture role="toolbar" aria-label="Tool options">
           {inkTool === 'pen' && (
             <>
@@ -435,7 +771,7 @@ function EditorInner({
           {inkTool && (
             <>
               {inkTool === 'pen' && <span className="divider" />}
-              {(inkTool === 'pen' ? PEN_COLORS : HIGHLIGHT_COLORS).map((c) => (
+              {(inkTool === 'highlighter' ? HIGHLIGHT_COLORS : PEN_COLORS).map((c) => (
                 <button
                   key={c}
                   className={`swatch-btn ${ink[inkTool].color === c ? 'active' : ''}`}
@@ -471,6 +807,42 @@ function EditorInner({
               </button>
             </>
           )}
+          {toolKind === 'text' && (
+            <>
+              <div className="segmented" role="radiogroup" aria-label="Font">
+                {(Object.keys(FONTS) as FontKey[]).map((f) => (
+                  <button
+                    key={f}
+                    role="radio"
+                    aria-checked={textStyle.font === f}
+                    className={`font-pick ${textStyle.font === f ? 'active' : ''}`}
+                    style={{ fontFamily: FONTS[f] }}
+                    onClick={() => setTextStyle({ ...textStyle, font: f })}
+                  >
+                    {FONT_LABELS[f]}
+                  </button>
+                ))}
+              </div>
+              <div className="segmented" role="radiogroup" aria-label="Text size">
+                {TEXT_SIZES.map(({ size, label }) => (
+                  <button key={size} role="radio" aria-checked={textStyle.size === size} className={textStyle.size === size ? 'active' : ''} onClick={() => setTextStyle({ ...textStyle, size })}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {PEN_COLORS.map((c) => (
+                <button key={c} className={`swatch-btn ${textStyle.color === c ? 'active' : ''}`} aria-label={`Text colour ${c}`} onClick={() => setTextStyle({ ...textStyle, color: c })}>
+                  <span className="swatch" style={{ background: c }} />
+                </button>
+              ))}
+            </>
+          )}
+          {toolKind === 'sticky' &&
+            STICKY_COLORS.map((c) => (
+              <button key={c} className={`swatch-btn ${stickyColor === c ? 'active' : ''}`} aria-label={`Note colour ${c}`} onClick={() => setStickyColor(c)}>
+                <span className="swatch" style={{ background: c }} />
+              </button>
+            ))}
           {toolKind === 'eraser' && (
             <>
               {ERASER_SIZES.map((size, i) => (
@@ -505,6 +877,7 @@ function EditorInner({
         </div>
       )}
 
+      <div className="canvas-area" ref={areaRef}>
       <div
         ref={scrollerRef}
         className="scroller"
@@ -513,6 +886,15 @@ function EditorInner({
         onPointerMoveCapture={onTouchMove}
         onPointerUpCapture={onTouchUp}
         onPointerCancelCapture={onTouchUp}
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes('Files')) e.preventDefault();
+        }}
+        onDrop={(e) => {
+          const files = [...e.dataTransfer.files].filter(isImageFile);
+          if (!files.length) return;
+          e.preventDefault();
+          void insertPhotos(files, e.clientX, e.clientY);
+        }}
       >
         <div className="pages" style={{ gap: PAGE_GAP }}>
           {doc.pages.map((page) => (
@@ -527,12 +909,41 @@ function EditorInner({
               selection={selection}
               setSelection={setSelection}
               selectionColors={PEN_COLORS}
+              stickyColors={STICKY_COLORS}
+              rulerEdges={ruler ? rulerEdgesClient : undefined}
+              onSaveElement={(sel) => void saveAsElement(sel)}
+              playback={playback}
+              onSeekInk={audioOpen && recState === 'idle' && recordings.length ? seekInk : undefined}
+              zoomTarget={zoomTarget}
+              setZoomTarget={setZoomTarget}
             />
           ))}
         </div>
       </div>
+      {ruler && <RulerOverlay ruler={ruler} setRuler={setRuler} zoom={zoom} onClose={() => setRuler(null)} />}
+      </div>
+      {(audioOpen || recState !== 'idle') && (
+        <AudioBar
+          docId={doc.id}
+          recordings={recordings}
+          onStopRecording={finishRecording}
+          onDelete={deleteRecording}
+          setPlayback={setPlayback}
+          api={audioApi}
+          onClose={() => setAudioOpen(false)}
+        />
+      )}
+      {zoomTarget && zoomPage && (
+        <ZoomWindow store={store} page={zoomPage} target={zoomTarget} setTarget={setZoomTarget} tool={tool} penOnly={penOnly} onClose={() => setZoomTarget(null)} />
+      )}
 
-      <div className="page-indicator" data-no-gesture>
+      {customising && <ToolbarSettings prefs={toolbarPrefs} onChange={setToolbarPrefs} onClose={() => setCustomising(false)} />}
+      {notice && (
+        <div className="toast" role="status">
+          {notice}
+        </div>
+      )}
+      <div className="page-indicator" data-no-gesture hidden={!!zoomTarget}>
         {currentPage + 1} / {doc.pages.length}
       </div>
     </div>

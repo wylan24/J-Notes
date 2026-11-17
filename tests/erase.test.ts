@@ -66,7 +66,7 @@ describe('splitStroke', () => {
 describe('replaceStrokesOps', () => {
   const doc = (): NotebookDoc => ({
     id: 'd',
-    pages: [{ id: 'p', template: 'blank', strokes: [stroke('a', [[0, 0], [100, 0]]), stroke('b', [[0, 20], [100, 20]]), stroke('c', [[0, 40], [100, 40]])] }],
+    pages: [{ id: 'p', template: 'blank', strokes: [stroke('a', [[0, 0], [100, 0]]), stroke('b', [[0, 20], [100, 20]]), stroke('c', [[0, 40], [100, 40]])], items: [] }],
   });
 
   it('puts pieces where the original was and undoes in one step', () => {

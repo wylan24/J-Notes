@@ -3,7 +3,7 @@ import type { InputPoint, Stroke } from '../core/model';
 
 export const HIGHLIGHTER_ALPHA = 0.38;
 
-type InkStyle = Pick<Stroke, 'tool' | 'width' | 'simulatePressure' | 'penStyle' | 'sharpness'>;
+type InkStyle = Pick<Stroke, 'tool' | 'width' | 'simulatePressure' | 'penStyle' | 'sharpness' | 'shape'>;
 
 const easeOut = (t: number) => Math.sin((t * Math.PI) / 2);
 
@@ -61,7 +61,10 @@ function outlineToPath(outline: number[][]): Path2D {
 
 export function buildStrokePath(points: InputPoint[], style: InkStyle, complete: boolean): Path2D {
   const input = points.map((p) => ({ x: p.x, y: p.y, pressure: p.p }));
-  return outlineToPath(getStroke(input, freehandOptions(style, complete)));
+  const options = freehandOptions(style, complete);
+  // Streamlining lags the pen to hide tremor; on a recognised shape it would round the corners off.
+  if (style.shape) options.streamline = 0;
+  return outlineToPath(getStroke(input, options));
 }
 
 // Committed strokes are immutable, so their tessellated outline is cached by identity.
@@ -76,10 +79,11 @@ export function strokePath(s: Stroke): Path2D {
   return p;
 }
 
-export function paintStroke(ctx: CanvasRenderingContext2D, s: Stroke, path: Path2D = strokePath(s)): void {
+export function paintStroke(ctx: CanvasRenderingContext2D, s: Stroke, path: Path2D = strokePath(s), alpha = 1): void {
   ctx.save();
+  ctx.globalAlpha = alpha;
   if (s.tool === 'highlighter') {
-    ctx.globalAlpha = HIGHLIGHTER_ALPHA;
+    ctx.globalAlpha = HIGHLIGHTER_ALPHA * alpha;
     ctx.globalCompositeOperation = 'multiply';
   }
   ctx.fillStyle = s.color;
