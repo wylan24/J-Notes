@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  blankPage,
   normalizePage,
   orientationOf,
   PAGE_H,
@@ -194,5 +195,28 @@ describe('page size and paper', () => {
     const t = clampTarget({ pageId: 'q', x: 5000, y: 5000, w: 280, h: 80 }, size);
     expect(t.x + t.w).toBe(size.w);
     expect(t.y + t.h).toBe(size.h);
+  });
+});
+
+describe('new notebook setup', () => {
+  it('builds the first page from the chosen size, orientation, paper and template', () => {
+    expect(blankPage('p', { template: 'grid', size: sizeFor('letter', 'landscape'), paper: 'dark' })).toEqual({
+      id: 'p',
+      template: 'grid',
+      strokes: [],
+      items: [],
+      size: { w: 1056, h: 816 },
+      paper: 'dark',
+    });
+  });
+
+  it('leaves default size and paper unstored, like pages saved before they existed', () => {
+    expect(blankPage('p', { template: 'ruled', size: sizeFor('a4', 'portrait'), paper: 'white' })).toEqual({ id: 'p', template: 'ruled', strokes: [], items: [] });
+  });
+
+  it('gives pages added later the setup of the page they follow', () => {
+    const first = blankPage('p1', { template: 'dotted', size: sizeFor('a5', 'landscape'), paper: 'yellow' });
+    const next = blankPage('p2', { template: 'dotted', size: pageSize(first), paper: pagePaper(first) });
+    expect(next).toEqual({ ...first, id: 'p2' });
   });
 });

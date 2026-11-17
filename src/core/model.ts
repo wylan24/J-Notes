@@ -132,6 +132,20 @@ export function pagePaper(page: Pick<Page, 'paper'>): Paper {
   return page.paper === 'yellow' || page.paper === 'dark' ? page.paper : DEFAULT_PAPER;
 }
 
+export interface PageSetup {
+  template: Template;
+  size: PageSize;
+  paper: Paper;
+}
+
+/** An empty page. Size and paper are only stored when they differ from the defaults. */
+export function blankPage(id: string, { template, size, paper }: PageSetup): Page {
+  const page: Page = { id, template, strokes: [], items: [] };
+  if (size.w !== DEFAULT_PAGE_SIZE.w || size.h !== DEFAULT_PAGE_SIZE.h) page.size = { w: size.w, h: size.h };
+  if (paper !== DEFAULT_PAPER) page.paper = paper;
+  return page;
+}
+
 /** Top edge of each page in a vertical stack, in CSS px at `zoom`, plus the total height. */
 export function pageTops(pages: readonly Pick<Page, 'size'>[], zoom: number, gap: number): { tops: number[]; height: number } {
   const tops: number[] = [];

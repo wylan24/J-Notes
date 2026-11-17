@@ -99,7 +99,7 @@ button:disabled { cursor: default; opacity: 0.35; }
 
 /* ---------- Modal ---------- */
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); display: grid; place-items: center; padding: 16px; z-index: 50; }
-.modal { background: var(--surface); border-radius: 16px; padding: 24px; width: min(440px, 100%); box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 18px; }
+.modal { background: var(--surface); border-radius: 16px; padding: 24px; width: min(440px, 100%); max-height: calc(100dvh - 32px); overflow-y: auto; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 18px; }
 .modal h2 { margin: 0; font-size: 20px; }
 .field { display: flex; flex-direction: column; gap: 8px; border: 0; padding: 0; margin: 0; }
 .field > span, .field legend { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; padding: 0; margin-bottom: 8px; }
@@ -110,10 +110,19 @@ button:disabled { cursor: default; opacity: 0.35; }
 .template-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
 .template-pick { display: flex; flex-direction: column; align-items: center; gap: 6px; border: 2px solid transparent; background: none; border-radius: 10px; padding: 6px; font-size: 12px; }
 .template-pick.active { border-color: var(--accent); }
-.paper { width: 100%; aspect-ratio: 794 / 1123; background: #fffefb; border-radius: 3px; box-shadow: 0 0 0 1px var(--border); }
-.paper-ruled { background-image: repeating-linear-gradient(#fffefb 0 9px, #c9d6e8 9px 10px); }
-.paper-grid { background-image: linear-gradient(#dde3ec 1px, transparent 1px), linear-gradient(90deg, #dde3ec 1px, #fffefb 1px); background-size: 8px 8px; }
-.paper-dotted { background-image: radial-gradient(#b9c2cf 1px, #fffefb 1.2px); background-size: 8px 8px; }
+.template-row { align-items: center; }
+.paper {
+  --paper-fill: #fffefb; --paper-rule: #c9d6e8; --paper-grid: #dde3ec; --paper-dot: #b9c2cf;
+  width: 100%; aspect-ratio: 794 / 1123; background: var(--paper-fill); border-radius: 3px; box-shadow: 0 0 0 1px var(--border);
+}
+.paper-ruled { background-image: repeating-linear-gradient(var(--paper-fill) 0 9px, var(--paper-rule) 9px 10px); }
+.paper-grid { background-image: linear-gradient(var(--paper-grid) 1px, transparent 1px), linear-gradient(90deg, var(--paper-grid) 1px, var(--paper-fill) 1px); background-size: 8px 8px; }
+.paper-dotted { background-image: radial-gradient(var(--paper-dot) 1px, var(--paper-fill) 1.2px); background-size: 8px 8px; }
+.paper-pick { box-shadow: 0 0 0 1px var(--border); }
+.paper-pick.active { box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent); }
+.segmented { display: flex; gap: 2px; padding: 2px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; }
+.segmented button { flex: 1; border: 0; background: none; color: var(--text); font: inherit; font-size: 13px; padding: 7px 8px; border-radius: 8px; }
+.segmented button.active { background: var(--surface); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15); font-weight: 600; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
 /* ---------- Editor ---------- */

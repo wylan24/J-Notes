@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import type { NotebookMeta, Template } from '../core/model';
+import { blankPage, sizeFor, type NotebookMeta, type Orientation, type PageSetup, type PageSizePreset, type Paper, type Template } from '../core/model';
+import { PAPER_STYLES } from '../render/page';
 import { newId } from '../core/ids';
 import { createNotebook, deleteNotebook, listNotebooks, updateMeta } from '../storage/db';
 import { fromFile } from '../io/notebookFile';
@@ -11,6 +12,20 @@ const TEMPLATES: { id: Template; label: string }[] = [
   { id: 'grid', label: 'Grid' },
   { id: 'dotted', label: 'Dotted' },
   { id: 'blank', label: 'Blank' },
+];
+const SIZES: { id: PageSizePreset; label: string }[] = [
+  { id: 'a4', label: 'A4' },
+  { id: 'a5', label: 'A5' },
+  { id: 'letter', label: 'Letter' },
+];
+const ORIENTATIONS: { id: Orientation; label: string }[] = [
+  { id: 'portrait', label: 'Portrait' },
+  { id: 'landscape', label: 'Landscape' },
+];
+const PAPERS: { id: Paper; label: string }[] = [
+  { id: 'white', label: 'White' },
+  { id: 'yellow', label: 'Yellow' },
+  { id: 'dark', label: 'Dark' },
 ];
 
 type Tab = 'all' | 'favourites' | 'trash';
@@ -33,12 +48,13 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
   const refresh = () => void listNotebooks().then(setItems);
   useEffect(refresh, []);
 
-  const create = async (title: string, template: Template, cover: string) => {
+  const create = async (title: string, setup: PageSetup, cover: string) => {
     const id = newId();
     const now = Date.now();
+    const { template } = setup;
     await createNotebook(
       { id, title: title.trim() || 'Untitled notebook', cover, template, createdAt: now, updatedAt: now, favourite: false, trashedAt: null, pageCount: 1 },
-      { id, pages: [{ id: newId(), template, strokes: [], items: [] }] },
+      { id, pages: [blankPage(newId(), setup)] },
     );
     onOpen(id);
   };
@@ -166,10 +182,39 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
   );
 }
 
-function NewNotebookDialog({ onCancel, onCreate }: { onCancel: () => void; onCreate: (title: string, t: Template, cover: string) => void }) {
+/** A row of mutually exclusive text buttons. */
+function Segmented<T extends string>({ label, options, value, onChange }: { label: string; options: { id: T; label: string }[]; value: T; onChange: (v: T) => void }) {
+  return (
+    <fieldset className="field">
+      <legend>{label}</legend>
+      <div className="segmented" role="radiogroup" aria-label={label}>
+        {options.map((o) => (
+          <button type="button" key={o.id} role="radio" aria-checked={value === o.id} className={value === o.id ? 'active' : ''} onClick={() => onChange(o.id)}>
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+function NewNotebookDialog({ onCancel, onCreate }: { onCancel: () => void; onCreate: (title: string, setup: PageSetup, cover: string) => void }) {
   const [title, setTitle] = useState('');
   const [template, setTemplate] = useState<Template>('ruled');
+  const [preset, setPreset] = useState<PageSizePreset>('a4');
+  const [orientation, setOrientation] = useState<Orientation>('portrait');
+  const [paper, setPaper] = useState<Paper>('white');
   const [cover, setCover] = useState(COVERS[0]);
+  const size = sizeFor(preset, orientation);
+  const colors = PAPER_STYLES[paper];
+  // The template previews take the chosen paper colour and page shape.
+  const previewStyle = {
+    '--paper-fill': colors.fill,
+    '--paper-rule': colors.rule,
+    '--paper-grid': colors.grid,
+    '--paper-dot': colors.dot,
+    aspectRatio: `${size.w} / ${size.h}`,
+  } as React.CSSProperties;
   return (
     <div className="modal-backdrop" onClick={onCancel}>
       <form
@@ -179,7 +224,7 @@ function NewNotebookDialog({ onCancel, onCreate }: { onCancel: () => void; onCre
         onClick={(e) => e.stopPropagation()}
         onSubmit={(e) => {
           e.preventDefault();
-          onCreate(title, template, cover);
+          onCreate(title, { template, size, paper }, cover);
         }}
       >
         <h2>New notebook</h2>
@@ -195,12 +240,32 @@ function NewNotebookDialog({ onCancel, onCreate }: { onCancel: () => void; onCre
             ))}
           </div>
         </fieldset>
+        <Segmented label="Size" options={SIZES} value={preset} onChange={setPreset} />
+        <Segmented label="Orientation" options={ORIENTATIONS} value={orientation} onChange={setOrientation} />
         <fieldset className="field">
-          <legend>Paper</legend>
+          <legend>Paper colour</legend>
+          <div className="cover-row" role="radiogroup" aria-label="Paper colour">
+            {PAPERS.map((p) => (
+              <button
+                type="button"
+                key={p.id}
+                role="radio"
+                aria-checked={paper === p.id}
+                className={`cover-pick paper-pick ${paper === p.id ? 'active' : ''}`}
+                style={{ background: PAPER_STYLES[p.id].fill }}
+                onClick={() => setPaper(p.id)}
+                aria-label={p.label}
+                title={p.label}
+              />
+            ))}
+          </div>
+        </fieldset>
+        <fieldset className="field">
+          <legend>Template</legend>
           <div className="template-row">
             {TEMPLATES.map((t) => (
               <button type="button" key={t.id} className={`template-pick ${template === t.id ? 'active' : ''}`} onClick={() => setTemplate(t.id)}>
-                <span className={`paper paper-${t.id}`} />
+                <span className={`paper paper-${t.id}`} style={previewStyle} />
                 {t.label}
               </button>
             ))}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { pageIndexAt, pageSize, pageTops, type EraseMode, type InkTool, type NotebookMeta, type PenStyle, type ToolKind } from '../core/model';
+import { blankPage, pageIndexAt, pagePaper, pageSize, pageTops, type EraseMode, type InkTool, type NotebookMeta, type PenStyle, type ToolKind } from '../core/model';
 import { newId } from '../core/ids';
 import { DocumentStore } from '../core/store';
 import { deleteSelectionOps } from '../core/selection';
@@ -510,8 +510,8 @@ function EditorInner({
   const addPage = () => {
     const index = Math.min(currentPage + 1, doc.pages.length);
     // A new page takes the size and paper of the page it follows.
-    const prev = doc.pages[currentPage];
-    const page = { id: newId(), template: meta.template, strokes: [], items: [], ...(prev?.size && { size: prev.size }), ...(prev?.paper && { paper: prev.paper }) };
+    const prev = doc.pages[currentPage] ?? {};
+    const page = blankPage(newId(), { template: meta.template, size: pageSize(prev), paper: pagePaper(prev) });
     store.dispatch([{ type: 'page.added', index, page }]);
     requestAnimationFrame(() => {
       const el = scrollerRef.current;
