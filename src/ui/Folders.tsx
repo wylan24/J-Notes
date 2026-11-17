@@ -192,7 +192,7 @@ export function FolderCard({
           <path d="M2.5 6.5A2 2 0 014.5 4.5h5l2 2.2h8a2 2 0 012 2v9.8a2 2 0 01-2 2h-15a2 2 0 01-2-2z" />
         </svg>
       </button>
-      <div className="card-meta">
+      <div className="card-meta" onClick={onOpen}>
         <div className="card-title" title={folder.name}>
           {folder.name}
         </div>

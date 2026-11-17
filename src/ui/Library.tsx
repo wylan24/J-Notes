@@ -5,6 +5,7 @@ import { TemplateGrid, type CustomTemplate } from './TemplateGrid';
 import { newId } from '../core/ids';
 import { createNotebook, deleteFolder, deleteNotebook, listFolders, listNotebooks, moveNotebook, putFolder, updateMeta } from '../storage/db';
 import { childFolders, countInFolder, effectiveFolder } from '../core/folders';
+import { NATURAL_DIR, normalizeLibraryPrefs, sortFolders, sortNotebooks, type LibraryPrefs, type SortKey } from '../core/librarySort';
 import { Breadcrumbs, FolderCard, FolderDialog, FolderPicker } from './Folders';
 import { fromFile } from '../io/notebookFile';
 import { pagesFromFiles, titleFromFileName } from '../io/importPages';
@@ -60,6 +61,24 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
   const [folderDialog, setFolderDialog] = useState<{ edit?: Folder } | null>(null);
   const [moving, setMoving] = useState<{ kind: 'notebook' | 'folder'; id: string; name: string; current: string | null } | null>(null);
   const [tab, setTab] = useState<Tab>('all');
+  // Sort order and grid/list layout, remembered in this browser.
+  const [prefs, setPrefsState] = useState<LibraryPrefs>(() => {
+    try {
+      return normalizeLibraryPrefs(JSON.parse(localStorage.getItem('jnotes.library') ?? 'null'));
+    } catch {
+      return normalizeLibraryPrefs(null);
+    }
+  });
+  const setPrefs = (patch: Partial<LibraryPrefs>) =>
+    setPrefsState((p) => {
+      const next = { ...p, ...patch };
+      try {
+        localStorage.setItem('jnotes.library', JSON.stringify(next));
+      } catch {
+        // Not remembered, but still applied.
+      }
+      return next;
+    });
   const [creating, setCreating] = useState(false);
   const [query, setQuery] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
@@ -157,13 +176,21 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
   // Browsing shows one folder's contents; searching looks through every folder.
   const q = query.trim().toLowerCase();
   const browsing = tab === 'all' && !q;
-  const visible = (items ?? []).filter((n) => {
+  const matching = (items ?? []).filter((n) => {
     if (tab === 'trash' ? n.trashedAt === null : n.trashedAt !== null) return false;
     if (tab === 'favourites' && !n.favourite) return false;
     if (browsing) return effectiveFolder(n, folderIds) === here;
     return !q || n.title.toLowerCase().includes(q);
   });
-  const shownFolders = tab !== 'all' ? [] : q ? folders.filter((f) => f.name.toLowerCase().includes(q)) : childFolders(folders, here);
+  const visible = sortNotebooks(matching, prefs.sort, prefs.dir);
+  const shownFolders = sortFolders(
+    tab !== 'all' ? [] : q ? folders.filter((f) => f.name.toLowerCase().includes(q)) : childFolders(folders, here),
+    folders,
+    items ?? [],
+    prefs.sort,
+    prefs.dir,
+  );
+  const dateLabel = (n: NotebookMeta) => (prefs.sort === 'created' ? `created ${timeAgo(n.createdAt)}` : timeAgo(n.updatedAt));
 
   return (
     <div className="library">
@@ -200,13 +227,40 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
         </div>
       </header>
 
-      <nav className="tabs" role="tablist">
-        {(['all', 'favourites', 'trash'] as Tab[]).map((t) => (
-          <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>
-            {t === 'all' ? 'All' : t === 'favourites' ? 'Favourites' : 'Trash'}
+      <div className="tabs-row">
+        <nav className="tabs" role="tablist">
+          {(['all', 'favourites', 'trash'] as Tab[]).map((t) => (
+            <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>
+              {t === 'all' ? 'All' : t === 'favourites' ? 'Favourites' : 'Trash'}
+            </button>
+          ))}
+        </nav>
+        <div className="view-controls">
+          <label className="sort-select">
+            <span>Sort</span>
+            <select value={prefs.sort} onChange={(e) => setPrefs({ sort: e.target.value as SortKey, dir: NATURAL_DIR[e.target.value as SortKey] })} aria-label="Sort by">
+              <option value="modified">Date modified</option>
+              <option value="created">Date created</option>
+              <option value="name">Name</option>
+            </select>
+          </label>
+          <button
+            className="icon-btn sm"
+            onClick={() => setPrefs({ dir: prefs.dir === 'asc' ? 'desc' : 'asc' })}
+            aria-label={prefs.sort === 'name' ? (prefs.dir === 'asc' ? 'A to Z; switch to Z to A' : 'Z to A; switch to A to Z') : prefs.dir === 'desc' ? 'Newest first; switch to oldest first' : 'Oldest first; switch to newest first'}
+            title={prefs.sort === 'name' ? (prefs.dir === 'asc' ? 'A → Z' : 'Z → A') : prefs.dir === 'desc' ? 'Newest first' : 'Oldest first'}
+          >
+            <Icon name={prefs.dir === 'asc' ? 'up' : 'down'} />
           </button>
-        ))}
-      </nav>
+          <div className="segmented view-toggle" role="radiogroup" aria-label="Layout">
+            {(['grid', 'list'] as const).map((v) => (
+              <button key={v} role="radio" aria-checked={prefs.view === v} aria-label={v === 'grid' ? 'Grid' : 'List'} title={v === 'grid' ? 'Grid' : 'List'} className={prefs.view === v ? 'active' : ''} onClick={() => setPrefs({ view: v })}>
+                <Icon name={v} />
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
 
       {browsing && <Breadcrumbs folders={folders} current={here} onNavigate={setFolder} />}
 
@@ -229,7 +283,7 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
           )}
         </div>
       ) : (
-        <ul className="grid">
+        <ul className={prefs.view === 'list' ? 'list' : 'grid'}>
           {shownFolders.map((f) => (
             <FolderCard
               key={f.id}
@@ -251,12 +305,13 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
                 <span className="spine" style={{ background: n.cover }} />
                 {n.thumbnail ? <img src={n.thumbnail} alt="" /> : <span className="cover-blank" style={{ background: n.cover }} />}
               </button>
-              <div className="card-meta">
+              {/* Clicking the title opens too (the cover button is the keyboard and screen reader target). */}
+              <div className="card-meta" onClick={() => n.trashedAt === null && onOpen(n.id)}>
                 <div className="card-title" title={n.title}>
                   {n.title}
                 </div>
                 <div className="card-sub">
-                  {n.pageCount} {n.pageCount === 1 ? 'page' : 'pages'} · {timeAgo(n.updatedAt)}
+                  {n.pageCount} {n.pageCount === 1 ? 'page' : 'pages'} · {dateLabel(n)}
                 </div>
               </div>
               <div className="card-actions">

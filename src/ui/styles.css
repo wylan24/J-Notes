@@ -78,7 +78,8 @@ button:disabled { cursor: default; opacity: 0.35; }
   border: 1px solid var(--border); background: var(--surface); color: var(--text);
   border-radius: 10px; padding: 8px 12px; min-width: 200px; font: inherit;
 }
-.tabs { display: flex; gap: 4px; margin: 20px 0 24px; border-bottom: 1px solid var(--border); }
+.tabs-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 20px 0 24px; border-bottom: 1px solid var(--border); }
+.tabs { display: flex; gap: 4px; }
 .tabs button { border: 0; background: none; padding: 8px 12px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .tabs button.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
 .grid { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 28px 22px; }
@@ -491,3 +492,20 @@ button:disabled { cursor: default; opacity: 0.35; }
 .folder-glyph { display: inline-flex; }
 .folder-glyph svg { fill: currentColor; stroke: currentColor; }
 .folder-tree button:disabled { opacity: 0.45; }
+
+/* ---------- Library sort and list view ---------- */
+.view-controls { display: flex; align-items: center; gap: 6px; padding-bottom: 6px; }
+.sort-select { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.sort-select select { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 8px; padding: 5px 8px; font: inherit; font-size: 13px; }
+.view-toggle { padding: 2px; }
+.view-toggle button { display: grid; place-items: center; padding: 4px 8px; }
+.view-toggle svg { width: 18px; height: 18px; }
+.card-meta { cursor: pointer; }
+.list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; }
+.list .card { flex-direction: row; align-items: center; gap: 14px; padding: 8px 4px; border-bottom: 1px solid var(--border); }
+.list .cover, .list .folder-cover { width: 40px; flex: none; border-radius: 2px 5px 5px 2px; }
+.list .folder-cover { border-radius: 6px; }
+.list .cover:hover:not(:disabled), .list .folder-cover:hover { transform: none; }
+.list .spine { width: 4px; }
+.list .card-meta { flex: 1; min-width: 0; }
+.list .card-actions { margin-top: 0; }
