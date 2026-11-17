@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { blankPage, sizeFor, type NotebookMeta, type Orientation, type PageSetup, type PageSizePreset, type Paper, type Template } from '../core/model';
+import { blankPage, sizeFor, type Folder, type NotebookMeta, type Orientation, type PageSetup, type PageSizePreset, type Paper, type Template } from '../core/model';
 import { PAPER_STYLES } from '../render/page';
 import { TemplateGrid, type CustomTemplate } from './TemplateGrid';
 import { newId } from '../core/ids';
-import { createNotebook, deleteNotebook, listNotebooks, updateMeta } from '../storage/db';
+import { createNotebook, deleteFolder, deleteNotebook, listFolders, listNotebooks, moveNotebook, putFolder, updateMeta } from '../storage/db';
+import { childFolders, countInFolder, effectiveFolder } from '../core/folders';
+import { Breadcrumbs, FolderCard, FolderDialog, FolderPicker } from './Folders';
 import { fromFile } from '../io/notebookFile';
 import { pagesFromFiles, titleFromFileName } from '../io/importPages';
 import { Icon } from './icons';
@@ -37,20 +39,75 @@ function timeAgo(ts: number): string {
 
 export function Library({ onOpen }: { onOpen: (id: string) => void }) {
   const [items, setItems] = useState<NotebookMeta[] | null>(null);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  // The open folder, kept for the session so returning from a notebook comes back to it.
+  const [folder, setFolderState] = useState<string | null>(() => {
+    try {
+      return sessionStorage.getItem('jnotes.folder');
+    } catch {
+      return null;
+    }
+  });
+  const setFolder = (id: string | null) => {
+    setFolderState(id);
+    try {
+      if (id) sessionStorage.setItem('jnotes.folder', id);
+      else sessionStorage.removeItem('jnotes.folder');
+    } catch {
+      // Storage unavailable: the folder just isn't remembered.
+    }
+  };
+  const [folderDialog, setFolderDialog] = useState<{ edit?: Folder } | null>(null);
+  const [moving, setMoving] = useState<{ kind: 'notebook' | 'folder'; id: string; name: string; current: string | null } | null>(null);
   const [tab, setTab] = useState<Tab>('all');
   const [creating, setCreating] = useState(false);
   const [query, setQuery] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
 
-  const refresh = () => void listNotebooks().then(setItems);
+  const refresh = () =>
+    void Promise.all([listNotebooks(), listFolders()]).then(([n, f]) => {
+      setFolders(f);
+      setItems(n);
+    });
   useEffect(refresh, []);
+
+  const folderIds = new Set(folders.map((f) => f.id));
+  // A remembered folder that has since been deleted falls back to the top level.
+  const here = folder && folderIds.has(folder) ? folder : null;
+  const fileHere = here ? { folderId: here } : {};
+
+  const saveFolder = async (name: string, color: string) => {
+    const edit = folderDialog?.edit;
+    await putFolder(edit ? { ...edit, name, color } : { id: newId(), name, color, parentId: here, createdAt: Date.now() });
+    setFolderDialog(null);
+    refresh();
+  };
+
+  const removeFolder = async (f: Folder) => {
+    const count = countInFolder(items ?? [], folders, f.id);
+    const what = count ? ` Its ${count} ${count === 1 ? 'notebook' : 'notebooks'} will move to the trash.` : '';
+    if (!confirm(`Delete the folder “${f.name}” and any folders inside it?${what}`)) return;
+    await deleteFolder(f.id);
+    refresh();
+  };
+
+  const moveTo = async (target: string | null) => {
+    if (!moving) return;
+    if (moving.kind === 'notebook') await moveNotebook(moving.id, target);
+    else {
+      const f = folders.find((x) => x.id === moving.id);
+      if (f) await putFolder({ ...f, parentId: target });
+    }
+    setMoving(null);
+    refresh();
+  };
 
   const create = async (title: string, setup: PageSetup, cover: string, blobs: { id: string; type: string; bytes: ArrayBuffer }[]) => {
     const id = newId();
     const now = Date.now();
     const { template } = setup;
     await createNotebook(
-      { id, title: title.trim() || 'Untitled notebook', cover, template, createdAt: now, updatedAt: now, favourite: false, trashedAt: null, pageCount: 1 },
+      { id, title: title.trim() || 'Untitled notebook', cover, template, createdAt: now, updatedAt: now, favourite: false, trashedAt: null, pageCount: 1, ...fileHere },
       { id, pages: [blankPage(newId(), setup)] },
       blobs.map((b) => ({ docId: id, ...b })),
     );
@@ -74,7 +131,7 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
       for (const file of files.filter(isNotebookFile)) {
         try {
           const { meta, doc, blobs } = fromFile(JSON.parse(await file.text()));
-          await createNotebook(meta, doc, blobs);
+          await createNotebook({ ...meta, ...fileHere }, doc, blobs);
         } catch (e) {
           alert(`Could not import ${file.name}: ${(e as Error).message}`);
         }
@@ -87,7 +144,7 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
       const id = newId();
       const now = Date.now();
       await createNotebook(
-        { id, title: titleFromFileName(rest[0].name), cover: COVERS[0], template: 'blank', createdAt: now, updatedAt: now, favourite: false, trashedAt: null, pageCount: pages.length },
+        { id, title: titleFromFileName(rest[0].name), cover: COVERS[0], template: 'blank', createdAt: now, updatedAt: now, favourite: false, trashedAt: null, pageCount: pages.length, ...fileHere },
         { id, pages },
         blobs.map((b) => ({ docId: id, ...b })),
       );
@@ -97,11 +154,16 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
     }
   };
 
+  // Browsing shows one folder's contents; searching looks through every folder.
+  const q = query.trim().toLowerCase();
+  const browsing = tab === 'all' && !q;
   const visible = (items ?? []).filter((n) => {
     if (tab === 'trash' ? n.trashedAt === null : n.trashedAt !== null) return false;
     if (tab === 'favourites' && !n.favourite) return false;
-    return !query || n.title.toLowerCase().includes(query.toLowerCase());
+    if (browsing) return effectiveFolder(n, folderIds) === here;
+    return !q || n.title.toLowerCase().includes(q);
   });
+  const shownFolders = tab !== 'all' ? [] : q ? folders.filter((f) => f.name.toLowerCase().includes(q)) : childFolders(folders, here);
 
   return (
     <div className="library">
@@ -127,6 +189,11 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
               if (files.length) void importFiles(files);
             }}
           />
+          {tab === 'all' && (
+            <button className="btn ghost" onClick={() => setFolderDialog({})}>
+              <Icon name="folder" /> New folder
+            </button>
+          )}
           <button className="btn primary" onClick={() => setCreating(true)}>
             <Icon name="plus" /> New notebook
           </button>
@@ -141,9 +208,18 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
         ))}
       </nav>
 
-      {items === null ? null : visible.length === 0 ? (
+      {browsing && <Breadcrumbs folders={folders} current={here} onNavigate={setFolder} />}
+
+      {items === null ? null : visible.length === 0 && shownFolders.length === 0 ? (
         <div className="empty">
-          {tab === 'trash' ? 'Trash is empty.' : tab === 'favourites' ? 'Star a notebook to see it here.' : (
+          {tab === 'trash' ? 'Trash is empty.' : tab === 'favourites' ? 'Star a notebook to see it here.' : q ? 'Nothing matches your search.' : here ? (
+            <>
+              <p>This folder is empty.</p>
+              <button className="btn primary" onClick={() => setCreating(true)}>
+                New notebook here
+              </button>
+            </>
+          ) : (
             <>
               <p>No notebooks yet.</p>
               <button className="btn primary" onClick={() => setCreating(true)}>
@@ -154,6 +230,21 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
         </div>
       ) : (
         <ul className="grid">
+          {shownFolders.map((f) => (
+            <FolderCard
+              key={f.id}
+              folder={f}
+              count={countInFolder(items, folders, f.id)}
+              subfolders={childFolders(folders, f.id).length}
+              onOpen={() => {
+                setQuery('');
+                setFolder(f.id);
+              }}
+              onEdit={() => setFolderDialog({ edit: f })}
+              onMove={() => setMoving({ kind: 'folder', id: f.id, name: f.name, current: f.parentId })}
+              onDelete={() => void removeFolder(f)}
+            />
+          ))}
           {visible.map((n) => (
             <li key={n.id} className="card">
               <button className="cover" onClick={() => n.trashedAt === null && onOpen(n.id)} disabled={n.trashedAt !== null} aria-label={`Open ${n.title}`}>
@@ -184,6 +275,14 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
                     >
                       <Icon name="pencil" />
                     </button>
+                    <button
+                      className="icon-btn sm"
+                      aria-label={`Move ${n.title} to a folder`}
+                      title="Move to folder"
+                      onClick={() => setMoving({ kind: 'notebook', id: n.id, name: n.title, current: effectiveFolder(n, folderIds) })}
+                    >
+                      <Icon name="folder" />
+                    </button>
                     <button className="icon-btn sm" aria-label="Move to trash" onClick={() => void patch(n.id, { trashedAt: Date.now() })}>
                       <Icon name="trash" />
                     </button>
@@ -212,6 +311,17 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
       )}
 
       {creating && <NewNotebookDialog onCancel={() => setCreating(false)} onCreate={create} />}
+      {folderDialog && <FolderDialog folder={folderDialog.edit} onCancel={() => setFolderDialog(null)} onSave={(name, color) => void saveFolder(name, color)} />}
+      {moving && (
+        <FolderPicker
+          folders={folders}
+          title={`Move “${moving.name}” to…`}
+          current={moving.current}
+          moving={moving.kind === 'folder' ? moving.id : undefined}
+          onCancel={() => setMoving(null)}
+          onPick={(id) => void moveTo(id)}
+        />
+      )}
     </div>
   );
 }

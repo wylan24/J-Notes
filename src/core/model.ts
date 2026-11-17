@@ -221,4 +221,16 @@ export interface NotebookMeta {
   trashedAt: number | null;
   pageCount: number;
   thumbnail?: string;
+  /** The folder it is filed in; absent for the top level (and for notebooks from before folders). */
+  folderId?: string;
+}
+
+/** A library folder. Folders nest through `parentId`; null is the top level. */
+export interface Folder {
+  id: string;
+  name: string;
+  /** #rrggbb */
+  color: string;
+  parentId: string | null;
+  createdAt: number;
 }

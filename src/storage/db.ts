@@ -1,4 +1,5 @@
-import { normalizeDoc, type NotebookDoc, type NotebookMeta, type Page } from '../core/model';
+import { normalizeDoc, type Folder, type NotebookDoc, type NotebookMeta, type Page } from '../core/model';
+import { planFolderDelete } from '../core/folders';
 import type { Session } from '../core/timer';
 import type { SavedElement } from '../core/elements';
 import { replay, type DocEvent } from '../core/ops';
@@ -12,12 +13,13 @@ import { replay, type DocEvent } from '../core/ops';
  *  blobs      image and audio bytes, key [docId, id]; page items refer to them by id
  *  sessions   timer and stopwatch history (not tied to a notebook's lifetime)
  *  elements   saved selections shared by all notebooks, each with copies of its photos
+ *  folders    library folders (nested by parentId); notebooks point at theirs with meta.folderId
  *
  * Loading a notebook = latest snapshot + replay of events after its seq.
  */
 
 const DB_NAME = 'jnotes';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 interface Snapshot {
   docId: string;
@@ -66,6 +68,8 @@ export function openDb(): Promise<IDBDatabase> {
       if (e.oldVersion < 2) db.createObjectStore('blobs', { keyPath: ['docId', 'id'] });
       if (e.oldVersion < 3) db.createObjectStore('sessions', { keyPath: 'id' }).createIndex('endedAt', 'endedAt');
       if (e.oldVersion < 4) db.createObjectStore('elements', { keyPath: 'id' });
+      // v5: folders. Existing notebooks have no folderId and so stay at the top level.
+      if (e.oldVersion < 5) db.createObjectStore('folders', { keyPath: 'id' });
     };
     r.onsuccess = () => resolve(r.result);
     r.onerror = () => reject(r.error);
@@ -259,3 +263,53 @@ export async function deleteElement(id: string): Promise<void> {
   await done(tx);
 }
 
+
+// --- Folders ---------------------------------------------------------------------------------
+
+export async function listFolders(): Promise<Folder[]> {
+  const db = await openDb();
+  return req(db.transaction('folders').objectStore('folders').getAll() as IDBRequest<Folder[]>);
+}
+
+/** Create or update a folder. */
+export async function putFolder(folder: Folder): Promise<void> {
+  const db = await openDb();
+  const tx = db.transaction('folders', 'readwrite');
+  tx.objectStore('folders').put(folder);
+  await done(tx);
+}
+
+/** File a notebook in a folder, or at the top level with null. */
+export async function moveNotebook(id: string, folderId: string | null): Promise<void> {
+  const db = await openDb();
+  const tx = db.transaction('meta', 'readwrite');
+  const store = tx.objectStore('meta');
+  const cur = await req(store.get(id) as IDBRequest<NotebookMeta | undefined>);
+  if (cur) {
+    const { folderId: _old, ...rest } = cur;
+    store.put(folderId ? { ...rest, folderId } : rest);
+  }
+  await done(tx);
+}
+
+/**
+ * Delete a folder and its subfolders, moving every notebook inside them to the trash, in one
+ * transaction. Returns how many notebooks were trashed.
+ */
+export async function deleteFolder(id: string): Promise<number> {
+  const db = await openDb();
+  const tx = db.transaction(['folders', 'meta'], 'readwrite');
+  const folders = tx.objectStore('folders');
+  const meta = tx.objectStore('meta');
+  const [allFolders, allMeta] = await Promise.all([req(folders.getAll() as IDBRequest<Folder[]>), req(meta.getAll() as IDBRequest<NotebookMeta[]>)]);
+  const plan = planFolderDelete(allMeta, allFolders, id);
+  const now = Date.now();
+  for (const f of plan.folderIds) folders.delete(f);
+  for (const m of allMeta) {
+    if (!plan.trash.includes(m.id)) continue;
+    const { folderId: _old, ...rest } = m;
+    meta.put({ ...rest, trashedAt: m.trashedAt ?? now });
+  }
+  await done(tx);
+  return plan.trash.length;
+}
