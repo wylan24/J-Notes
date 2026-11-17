@@ -457,3 +457,11 @@ button:disabled { cursor: default; opacity: 0.35; }
 .search-results button.active { background: var(--accent-soft); }
 .search-results mark { background: #ffe066; color: inherit; border-radius: 2px; padding: 0 1px; }
 .search-hit { position: absolute; pointer-events: none; background: rgba(255, 214, 0, 0.35); outline: 2px solid rgba(240, 180, 0, 0.9); border-radius: 3px; mix-blend-mode: multiply; }
+
+/* ---------- Export as PDF ---------- */
+.radio-row, .check-row { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.check-row { align-items: flex-start; }
+.check-row input { margin-top: 3px; }
+.check-row small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.range-input { flex: 1; min-width: 0; padding: 6px 10px !important; }
+.field-error { color: #c0392b; font-size: 12px; }

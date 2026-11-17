@@ -10,6 +10,7 @@ import { movePageOp } from '../core/ops';
 import { ChangeTemplateDialog, NotebookPickerDialog, PageMenuItems, type PageActionHandlers } from './PageActions';
 import { PageSidebar } from './PageSidebar';
 import { SearchPanel, type SearchHit } from './SearchPanel';
+import { PdfExportDialog } from './PdfExportDialog';
 import type { CustomTemplate } from './TemplateGrid';
 import { Persister, type SaveStatus } from '../storage/persister';
 import { downloadBlob, exportPagePng, renderContentThumbnail, renderThumbnail } from '../render/page';
@@ -642,6 +643,15 @@ function EditorInner({
     void updateMeta(meta.id, { title: t });
   };
 
+  const [pdfExportOpen, setPdfExportOpen] = useState(false);
+  const exportAsPdf = async (pages: number[], background: boolean) => {
+    const { exportPdf } = await import('../io/pdfExport');
+    const bytes = await exportPdf(store.doc, store.doc.id, meta.title, { pages, background });
+    const suffix = pages.length === 1 ? ` p${pages[0] + 1}` : '';
+    downloadBlob(new Blob([bytes], { type: 'application/pdf' }), `${meta.title}${suffix}.pdf`);
+    setPdfExportOpen(false);
+  };
+
   const exportJson = async () => {
     const blobs = await getBlobs(doc.id, referencedBlobIds(doc));
     const blob = new Blob([JSON.stringify(toFile(meta, doc, blobs))], { type: 'application/json' });
@@ -892,8 +902,9 @@ function EditorInner({
             <summary className="icon-btn" aria-label="Export">
               <Icon name="share" />
             </summary>
-            <div className="menu-pop">
+            <div className="menu-pop" onClick={(e) => (e.target as HTMLElement).closest('button') && e.currentTarget.closest('details')?.removeAttribute('open')}>
               <button onClick={() => doc.pages[currentPage] && void exportPagePng(doc.pages[currentPage], doc.id, `${meta.title} p${currentPage + 1}.png`)}>Export page as PNG</button>
+              <button onClick={() => setPdfExportOpen(true)}>Export as PDF…</button>
               <button onClick={() => void exportJson().catch((e: Error) => alert(`Export failed: ${e.message}`))}>Export notebook (.jnotes.json)</button>
             </div>
           </details>
@@ -1107,6 +1118,9 @@ function EditorInner({
       )}
       {(pageDialog?.kind === 'move' || pageDialog?.kind === 'copy') && (
         <NotebookPickerDialog currentId={doc.id} mode={pageDialog.kind} onCancel={() => setPageDialog(null)} onPick={(n) => sendPage(pageDialog.pageId, n, pageDialog.kind as 'move' | 'copy')} />
+      )}
+      {pdfExportOpen && (
+        <PdfExportDialog pageCount={doc.pages.length} currentPage={currentPage} onCancel={() => setPdfExportOpen(false)} onExport={exportAsPdf} />
       )}
       {searchOpen && <SearchPanel doc={doc} onJump={showSearchHit} onClose={closeSearch} />}
       {ruler && <RulerOverlay ruler={ruler} setRuler={setRuler} zoom={zoom} onClose={() => setRuler(null)} />}

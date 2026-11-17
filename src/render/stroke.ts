@@ -59,12 +59,34 @@ function outlineToPath(outline: number[][]): Path2D {
   return path;
 }
 
-export function buildStrokePath(points: InputPoint[], style: InkStyle, complete: boolean): Path2D {
+/** The filled outline of a stroke, as polygon points in page units. */
+export function strokeOutline(points: InputPoint[], style: InkStyle, complete: boolean): number[][] {
   const input = points.map((p) => ({ x: p.x, y: p.y, pressure: p.p }));
   const options = freehandOptions(style, complete);
   // Streamlining lags the pen to hide tremor; on a recognised shape it would round the corners off.
   if (style.shape) options.streamline = 0;
-  return outlineToPath(getStroke(input, options));
+  return getStroke(input, options);
+}
+
+export function buildStrokePath(points: InputPoint[], style: InkStyle, complete: boolean): Path2D {
+  return outlineToPath(strokeOutline(points, style, complete));
+}
+
+/**
+ * A committed stroke's outline as SVG path data, traced with the same curves as on screen,
+ * for vector export. Empty for a stroke with no outline.
+ */
+export function strokeSvgPath(s: Stroke): string {
+  const o = strokeOutline(s.points, s, true);
+  if (!o.length) return '';
+  const f = (n: number) => Math.round(n * 100) / 100;
+  let d = `M${f(o[0][0])} ${f(o[0][1])}`;
+  for (let i = 1; i < o.length; i++) {
+    const [x0, y0] = o[i - 1];
+    const [x1, y1] = o[i];
+    d += `Q${f(x0)} ${f(y0)} ${f((x0 + x1) / 2)} ${f((y0 + y1) / 2)}`;
+  }
+  return d + 'Z';
 }
 
 // Committed strokes are immutable, so their tessellated outline is cached by identity.
