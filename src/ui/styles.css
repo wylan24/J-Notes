@@ -401,3 +401,12 @@ button:disabled { cursor: default; opacity: 0.35; }
 .overflow-panel .timer-chip { display: none; }
 .overflow-panel .elements-panel, .overflow-panel .timer-panel { top: 0; right: auto; left: calc(100% + 8px); }
 
+
+/* ---------- Page actions ---------- */
+.notebook-pick { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 50vh; overflow-y: auto; }
+.notebook-pick button { width: 100%; display: flex; align-items: center; gap: 12px; border: 0; background: none; color: var(--text); font: inherit; text-align: left; padding: 8px 10px; border-radius: 10px; }
+.notebook-pick button:hover:not(:disabled) { background: var(--surface-2); }
+.notebook-pick-cover { flex: none; width: 22px; height: 30px; border-radius: 3px; }
+.notebook-pick-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu-pop hr { border: 0; border-top: 1px solid var(--border); margin: 4px 6px; }
+.menu-pop button:disabled { color: var(--muted); background: none; }

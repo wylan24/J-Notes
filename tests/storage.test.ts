@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { NotebookMeta } from '../src/core/model';
 import { DocumentStore } from '../src/core/store';
 import { movePageOp, updatePageOp } from '../src/core/ops';
-import { addSession, appendEvents, deleteElement, listElements, renameElement, saveElement, clearSessions, compact, createNotebook, deleteNotebook, getBlob, getBlobs, listSessions, listNotebooks, loadDocument, openDb, putBlob, resetDbForTests } from '../src/storage/db';
+import { addSession, appendEvents, appendPage, deleteElement, listElements, renameElement, saveElement, clearSessions, compact, createNotebook, deleteNotebook, getBlob, getBlobs, listSessions, listNotebooks, loadDocument, openDb, putBlob, resetDbForTests } from '../src/storage/db';
 import { Persister } from '../src/storage/persister';
 
 const meta = (id: string): NotebookMeta => ({
@@ -62,6 +62,22 @@ describe('event-sourced storage', () => {
     expect(reloaded.doc.pages.map((p) => p.id)).toEqual(['c', 'a', 'b']);
     expect(reloaded.doc.pages[1].paper).toBe('yellow');
     expect(reloaded.doc).toEqual(store.doc);
+  });
+
+  it('copies a page to another notebook with its photos', async () => {
+    const photoPage = { id: 'p', template: 'blank' as const, strokes: [], items: [{ id: 'i', kind: 'image' as const, x: 0, y: 0, w: 5, h: 5, blobId: 'photo' }] };
+    await createNotebook(meta('src'), { id: 'src', pages: [photoPage] }, [{ docId: 'src', id: 'photo', type: 'image/png', bytes: new Uint8Array([9, 8]).buffer }]);
+    await createNotebook(meta('dst'), { id: 'dst', pages: [{ id: 'q', template: 'blank', strokes: [], items: [] }] });
+
+    const blobs = await getBlobs('src', ['photo']);
+    await appendPage('dst', { ...photoPage, id: 'copy' }, blobs);
+    await appendPage('dst', { ...photoPage, id: 'copy2' }, blobs); // a second append gets the next seq
+
+    const { doc, seq } = await loadDocument('dst');
+    expect(doc.pages.map((p) => p.id)).toEqual(['q', 'copy', 'copy2']);
+    expect(seq).toBe(2);
+    expect([...new Uint8Array((await getBlob('dst', 'photo'))!.bytes)]).toEqual([9, 8]);
+    expect((await listNotebooks()).find((n) => n.id === 'dst')!.pageCount).toBe(3);
   });
 
   it('compaction keeps the document identical and drops old events', async () => {

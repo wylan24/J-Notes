@@ -1,4 +1,4 @@
-import { normalizeDoc, type NotebookDoc, type NotebookMeta } from '../core/model';
+import { normalizeDoc, type NotebookDoc, type NotebookMeta, type Page } from '../core/model';
 import type { Session } from '../core/timer';
 import type { SavedElement } from '../core/elements';
 import { replay, type DocEvent } from '../core/ops';
@@ -154,6 +154,23 @@ export async function appendEvents(docId: string, events: DocEvent[], metaPatch:
   const metaStore = tx.objectStore('meta');
   const cur = await req(metaStore.get(docId) as IDBRequest<NotebookMeta | undefined>);
   if (cur) metaStore.put({ ...cur, ...metaPatch });
+  await done(tx);
+}
+
+/**
+ * Add a page to the end of a notebook that isn't open, with the blobs it refers to, as a logged
+ * `page.added` event. Used to move or copy pages between notebooks.
+ */
+export async function appendPage(docId: string, page: Page, blobs: Pick<StoredBlob, 'id' | 'type' | 'bytes'>[]): Promise<void> {
+  const { doc, seq } = await loadDocument(docId);
+  const db = await openDb();
+  const tx = db.transaction(['events', 'meta', 'blobs'], 'readwrite');
+  const event: DocEvent = { docId, seq: seq + 1, ts: Date.now(), op: { type: 'page.added', index: doc.pages.length, page } };
+  tx.objectStore('events').put(event);
+  for (const b of blobs) tx.objectStore('blobs').put({ ...b, docId } satisfies StoredBlob);
+  const metaStore = tx.objectStore('meta');
+  const cur = await req(metaStore.get(docId) as IDBRequest<NotebookMeta | undefined>);
+  if (cur) metaStore.put({ ...cur, pageCount: doc.pages.length + 1, updatedAt: event.ts });
   await done(tx);
 }
 

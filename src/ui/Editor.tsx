@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { blankPage, pageIndexAt, pagePaper, pageSize, pageTops, type EraseMode, type InkTool, type NotebookMeta, type PenStyle, type ToolKind } from '../core/model';
+import { pageIndexAt, pageSize, pageTops, type EraseMode, type InkTool, type NotebookMeta, type PenStyle, type Template, type ToolKind } from '../core/model';
 import { newId } from '../core/ids';
 import { DocumentStore } from '../core/store';
 import { deleteSelectionOps } from '../core/selection';
-import { getBlobs, getMeta, listElements, loadDocument, putBlob, saveElement, updateMeta } from '../storage/db';
+import { appendPage, getBlobs, getMeta, listElements, loadDocument, putBlob, saveElement, updateMeta } from '../storage/db';
+import { changeTemplateOp, clonePage, duplicatePageOp, insertPageOp, pageBlobIds } from '../core/pages';
+import { ChangeTemplateDialog, NotebookPickerDialog } from './PageActions';
+import type { CustomTemplate } from './TemplateGrid';
 import { Persister, type SaveStatus } from '../storage/persister';
 import { downloadBlob, exportPagePng, renderContentThumbnail, renderThumbnail } from '../render/page';
 import { imageResolver, primeImage } from '../render/items';
@@ -507,16 +510,54 @@ function EditorInner({
     return () => window.removeEventListener('paste', onPaste);
   }, []);
 
-  const addPage = () => {
-    const index = Math.min(currentPage + 1, doc.pages.length);
-    // A new page takes the size, paper and custom template image of the page it follows.
-    const prev = doc.pages[currentPage] ?? {};
-    const page = blankPage(newId(), { template: meta.template, size: pageSize(prev), paper: pagePaper(prev), background: prev.background });
-    store.dispatch([{ type: 'page.added', index, page }]);
+  // --- Page actions -------------------------------------------------------------------
+  const [pageDialog, setPageDialog] = useState<null | 'template' | 'move' | 'copy'>(null);
+
+  const scrollToPage = (index: number) =>
     requestAnimationFrame(() => {
       const el = scrollerRef.current;
       if (el) el.scrollTo({ top: pageTops(store.doc.pages, zoom, PAGE_GAP).tops[index] ?? 0, behavior: 'smooth' });
     });
+
+  /** Dispatch a page.added op (one undo step) and scroll to the new page. */
+  const addPageOp = (op: ReturnType<typeof insertPageOp>) => {
+    if (op?.type !== 'page.added') return;
+    store.dispatch([op]);
+    scrollToPage(op.index);
+  };
+
+  // A new page copies the template, size, paper and custom template image of the page it is next to.
+  const addPage = () => addPageOp(insertPageOp(doc, currentPage, 'after'));
+  const insertPage = (where: 'before' | 'after') => addPageOp(insertPageOp(doc, currentPage, where));
+  const duplicatePage = () => addPageOp(duplicatePageOp(doc, currentPage));
+
+  const applyTemplate = async (choice: Template | CustomTemplate) => {
+    const page = store.doc.pages[currentPage];
+    setPageDialog(null);
+    if (!page) return;
+    if (typeof choice === 'string') {
+      const op = changeTemplateOp(page, choice);
+      if (op) store.dispatch([op]);
+      return;
+    }
+    await putBlob({ docId: store.doc.id, ...choice.blob });
+    primeImage(store.doc.id, choice.blob.id, choice.img);
+    const op = changeTemplateOp(page, { kind: 'image', blobId: choice.blob.id });
+    if (op) store.dispatch([op]);
+  };
+
+  /**
+   * Copy the current page, with its photos and template image, to the end of another notebook.
+   * A move then removes it here, as one undo step; undo doesn't take it back out of the other notebook.
+   */
+  const sendPage = async (target: NotebookMeta, mode: 'move' | 'copy') => {
+    const index = currentPage;
+    const page = store.doc.pages[index];
+    if (!page) return;
+    const blobs = await getBlobs(store.doc.id, pageBlobIds(page));
+    await appendPage(target.id, clonePage(page, { keepRecordings: false }), blobs.map(({ id, type, bytes }) => ({ id, type, bytes })));
+    if (mode === 'move' && store.doc.pages.length > 1) store.dispatch([{ type: 'page.removed', page, index }]);
+    setPageDialog(null);
   };
 
   const deletePage = () => {
@@ -728,6 +769,23 @@ function EditorInner({
             <Icon name="trash" />
           </button>
           <details className="menu">
+            <summary className="icon-btn" aria-label="Page actions" title="Page actions">
+              <Icon name="pages" />
+            </summary>
+            {/* Close the menu once an action is chosen. */}
+            <div className="menu-pop" onClick={(e) => (e.target as HTMLElement).closest('button') && e.currentTarget.closest('details')?.removeAttribute('open')}>
+              <button onClick={() => insertPage('before')}>Insert page before</button>
+              <button onClick={() => insertPage('after')}>Insert page after</button>
+              <button onClick={duplicatePage}>Duplicate page</button>
+              <button onClick={() => setPageDialog('template')}>Change template…</button>
+              <hr />
+              <button onClick={() => setPageDialog('move')} disabled={doc.pages.length <= 1}>
+                Move to notebook…
+              </button>
+              <button onClick={() => setPageDialog('copy')}>Copy to notebook…</button>
+            </div>
+          </details>
+          <details className="menu">
             <summary className="icon-btn" aria-label="Export">
               <Icon name="share" />
             </summary>
@@ -923,6 +981,12 @@ function EditorInner({
           ))}
         </div>
       </div>
+      {pageDialog === 'template' && doc.pages[currentPage] && (
+        <ChangeTemplateDialog page={doc.pages[currentPage]} onCancel={() => setPageDialog(null)} onApply={(c) => void applyTemplate(c).catch((e: Error) => alert(`Could not change the template: ${e.message}`))} />
+      )}
+      {(pageDialog === 'move' || pageDialog === 'copy') && (
+        <NotebookPickerDialog currentId={doc.id} mode={pageDialog} onCancel={() => setPageDialog(null)} onPick={(n) => sendPage(n, pageDialog)} />
+      )}
       {ruler && <RulerOverlay ruler={ruler} setRuler={setRuler} zoom={zoom} onClose={() => setRuler(null)} />}
       </div>
       {(audioOpen || recState !== 'idle') && (

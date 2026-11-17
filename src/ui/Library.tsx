@@ -1,23 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { blankPage, sizeFor, type NotebookMeta, type Orientation, type PageSetup, type PageSizePreset, type Paper, type Template } from '../core/model';
-import { paintPage, PAPER_STYLES } from '../render/page';
-import { prepareImage } from '../io/images';
+import { PAPER_STYLES } from '../render/page';
+import { TemplateGrid, type CustomTemplate } from './TemplateGrid';
 import { newId } from '../core/ids';
 import { createNotebook, deleteNotebook, listNotebooks, updateMeta } from '../storage/db';
 import { fromFile } from '../io/notebookFile';
 import { Icon } from './icons';
 
 const COVERS = ['#3d5a80', '#c8553d', '#2a9d8f', '#e9c46a', '#6d597a', '#264653'];
-const TEMPLATES: { id: Template; label: string }[] = [
-  { id: 'ruled', label: 'Ruled' },
-  { id: 'grid', label: 'Grid' },
-  { id: 'dotted', label: 'Dotted' },
-  { id: 'blank', label: 'Blank' },
-  { id: 'legal', label: 'Legal' },
-  { id: 'cornell', label: 'Cornell' },
-  { id: 'music', label: 'Music' },
-  { id: 'planner', label: 'Weekly' },
-];
 const SIZES: { id: PageSizePreset; label: string }[] = [
   { id: 'a4', label: 'A4' },
   { id: 'a5', label: 'A5' },
@@ -204,26 +194,6 @@ function Segmented<T extends string>({ label, options, value, onChange }: { labe
   );
 }
 
-/** Width, in CSS px, the template previews are painted at. */
-const PREVIEW_W = 72;
-
-/** A small page painted by the real renderer, so previews match what the notebook will show. */
-function TemplatePreview({ setup, image }: { setup: PageSetup; image?: HTMLImageElement }) {
-  const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    const c = ref.current;
-    if (!c) return;
-    const page = blankPage('preview', setup);
-    paintPage(c, page, PREVIEW_W / setup.size.w, Math.min(window.devicePixelRatio || 1, 3), { items: { images: () => image ?? null } });
-  }, [setup, image]);
-  return <canvas ref={ref} className="paper" style={{ aspectRatio: `${setup.size.w} / ${setup.size.h}` }} />;
-}
-
-interface CustomTemplate {
-  blob: { id: string; type: string; bytes: ArrayBuffer };
-  img: HTMLImageElement;
-}
-
 function NewNotebookDialog({ onCancel, onCreate }: { onCancel: () => void; onCreate: (title: string, setup: PageSetup, cover: string, blobs: CustomTemplate['blob'][]) => void }) {
   const [title, setTitle] = useState('');
   const [template, setTemplate] = useState<Template | 'image'>('ruled');
@@ -232,23 +202,7 @@ function NewNotebookDialog({ onCancel, onCreate }: { onCancel: () => void; onCre
   const [orientation, setOrientation] = useState<Orientation>('portrait');
   const [paper, setPaper] = useState<Paper>('white');
   const [cover, setCover] = useState(COVERS[0]);
-  const imageInput = useRef<HTMLInputElement>(null);
   const size = useMemo(() => sizeFor(preset, orientation), [preset, orientation]);
-  const setups = useMemo(() => TEMPLATES.map((t) => ({ ...t, setup: { template: t.id, size, paper } })), [size, paper]);
-  const customSetup = useMemo<PageSetup | null>(
-    () => (custom ? { template: 'blank', size, paper, background: { kind: 'image', blobId: custom.blob.id } } : null),
-    [custom, size, paper],
-  );
-
-  const pickImage = async (file: File) => {
-    try {
-      const prepared = await prepareImage(file);
-      setCustom({ blob: { id: newId(), type: prepared.type, bytes: prepared.bytes }, img: prepared.img });
-      setTemplate('image');
-    } catch (e) {
-      alert(`Could not use this image: ${(e as Error).message}`);
-    }
-  };
 
   return (
     <div className="modal-backdrop" onClick={onCancel}>
@@ -259,7 +213,7 @@ function NewNotebookDialog({ onCancel, onCreate }: { onCancel: () => void; onCre
         onClick={(e) => e.stopPropagation()}
         onSubmit={(e) => {
           e.preventDefault();
-          if (template === 'image' && customSetup && custom) onCreate(title, customSetup, cover, [custom.blob]);
+          if (template === 'image' && custom) onCreate(title, { template: 'blank', size, paper, background: { kind: 'image', blobId: custom.blob.id } }, cover, [custom.blob]);
           else onCreate(title, { template: template === 'image' ? 'blank' : template, size, paper }, cover, []);
         }}
       >
@@ -298,41 +252,7 @@ function NewNotebookDialog({ onCancel, onCreate }: { onCancel: () => void; onCre
         </fieldset>
         <fieldset className="field">
           <legend>Template</legend>
-          <div className="template-row">
-            {setups.map((t) => (
-              <button type="button" key={t.id} className={`template-pick ${template === t.id ? 'active' : ''}`} aria-pressed={template === t.id} onClick={() => setTemplate(t.id)}>
-                <TemplatePreview setup={t.setup} />
-                {t.label}
-              </button>
-            ))}
-            <button
-              type="button"
-              className={`template-pick ${template === 'image' ? 'active' : ''}`}
-              aria-pressed={template === 'image'}
-              title="Use an image as the template"
-              onClick={() => (custom && template !== 'image' ? setTemplate('image') : imageInput.current?.click())}
-            >
-              {customSetup ? (
-                <TemplatePreview setup={customSetup} image={custom!.img} />
-              ) : (
-                <span className="paper paper-add" style={{ aspectRatio: `${size.w} / ${size.h}` }}>
-                  <Icon name="plus" />
-                </span>
-              )}
-              {custom && template === 'image' ? 'Change…' : 'Image…'}
-            </button>
-            <input
-              ref={imageInput}
-              type="file"
-              accept="image/*"
-              hidden
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) void pickImage(f);
-                e.target.value = '';
-              }}
-            />
-          </div>
+          <TemplateGrid size={size} paper={paper} value={template} onChange={setTemplate} custom={custom} onCustom={setCustom} />
         </fieldset>
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={onCancel}>
