@@ -5,7 +5,9 @@ import { DocumentStore } from '../core/store';
 import { deleteSelectionOps } from '../core/selection';
 import { appendPage, getBlobs, getMeta, listElements, loadDocument, putBlob, saveElement, updateMeta } from '../storage/db';
 import { changeTemplateOp, clonePage, duplicatePageOp, insertPageOp, pageBlobIds } from '../core/pages';
-import { ChangeTemplateDialog, NotebookPickerDialog } from './PageActions';
+import { movePageOp } from '../core/ops';
+import { ChangeTemplateDialog, NotebookPickerDialog, PageMenuItems, type PageActionHandlers } from './PageActions';
+import { PageSidebar } from './PageSidebar';
 import type { CustomTemplate } from './TemplateGrid';
 import { Persister, type SaveStatus } from '../storage/persister';
 import { downloadBlob, exportPagePng, renderContentThumbnail, renderThumbnail } from '../render/page';
@@ -511,12 +513,15 @@ function EditorInner({
   }, []);
 
   // --- Page actions -------------------------------------------------------------------
-  const [pageDialog, setPageDialog] = useState<null | 'template' | 'move' | 'copy'>(null);
+  // Dialogs name their page by id, so a reorder while one is open can't retarget it.
+  const [pageDialog, setPageDialog] = useState<null | { kind: 'template' | 'move' | 'copy'; pageId: string }>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(() => readPref('jnotes.sidebar', false));
+  useEffect(() => writePref('jnotes.sidebar', sidebarOpen), [sidebarOpen]);
 
-  const scrollToPage = (index: number) =>
+  const scrollToPage = (index: number, behavior: ScrollBehavior = 'smooth') =>
     requestAnimationFrame(() => {
       const el = scrollerRef.current;
-      if (el) el.scrollTo({ top: pageTops(store.doc.pages, zoom, PAGE_GAP).tops[index] ?? 0, behavior: 'smooth' });
+      if (el) el.scrollTo({ top: pageTops(store.doc.pages, zoom, PAGE_GAP).tops[index] ?? 0, behavior });
     });
 
   /** Dispatch a page.added op (one undo step) and scroll to the new page. */
@@ -527,13 +532,11 @@ function EditorInner({
   };
 
   // A new page copies the template, size, paper and custom template image of the page it is next to.
-  const addPage = () => addPageOp(insertPageOp(doc, currentPage, 'after'));
-  const insertPage = (where: 'before' | 'after') => addPageOp(insertPageOp(doc, currentPage, where));
-  const duplicatePage = () => addPageOp(duplicatePageOp(doc, currentPage));
+  const addPage = () => addPageOp(insertPageOp(store.doc, currentPage, 'after'));
 
-  const applyTemplate = async (choice: Template | CustomTemplate) => {
-    const page = store.doc.pages[currentPage];
+  const applyTemplate = async (pageId: string, choice: Template | CustomTemplate) => {
     setPageDialog(null);
+    const page = store.doc.pages.find((p) => p.id === pageId);
     if (!page) return;
     if (typeof choice === 'string') {
       const op = changeTemplateOp(page, choice);
@@ -542,29 +545,49 @@ function EditorInner({
     }
     await putBlob({ docId: store.doc.id, ...choice.blob });
     primeImage(store.doc.id, choice.blob.id, choice.img);
-    const op = changeTemplateOp(page, { kind: 'image', blobId: choice.blob.id });
+    const op = changeTemplateOp(store.doc.pages.find((p) => p.id === pageId) ?? page, { kind: 'image', blobId: choice.blob.id });
     if (op) store.dispatch([op]);
   };
 
   /**
-   * Copy the current page, with its photos and template image, to the end of another notebook.
+   * Copy a page, with its photos and template image, to the end of another notebook.
    * A move then removes it here, as one undo step; undo doesn't take it back out of the other notebook.
    */
-  const sendPage = async (target: NotebookMeta, mode: 'move' | 'copy') => {
-    const index = currentPage;
-    const page = store.doc.pages[index];
+  const sendPage = async (pageId: string, target: NotebookMeta, mode: 'move' | 'copy') => {
+    const page = store.doc.pages.find((p) => p.id === pageId);
     if (!page) return;
     const blobs = await getBlobs(store.doc.id, pageBlobIds(page));
     await appendPage(target.id, clonePage(page, { keepRecordings: false }), blobs.map(({ id, type, bytes }) => ({ id, type, bytes })));
-    if (mode === 'move' && store.doc.pages.length > 1) store.dispatch([{ type: 'page.removed', page, index }]);
+    const index = store.doc.pages.findIndex((p) => p.id === pageId);
+    if (mode === 'move' && index >= 0 && store.doc.pages.length > 1) store.dispatch([{ type: 'page.removed', page: store.doc.pages[index], index }]);
     setPageDialog(null);
+    setNotice(`${mode === 'move' ? 'Moved' : 'Copied'} page to “${target.title}”`);
   };
 
-  const deletePage = () => {
-    const page = doc.pages[currentPage];
-    if (!page || doc.pages.length <= 1) return;
-    if ((page.strokes.length || page.items.length) && !confirm(`Delete page ${currentPage + 1}? You can undo this.`)) return;
-    store.dispatch([{ type: 'page.removed', page, index: currentPage }]);
+  const deletePageAt = (index: number) => {
+    const page = store.doc.pages[index];
+    if (!page || store.doc.pages.length <= 1) return;
+    if ((page.strokes.length || page.items.length) && !confirm(`Delete page ${index + 1}? You can undo this.`)) return;
+    store.dispatch([{ type: 'page.removed', page, index }]);
+  };
+  const deletePage = () => deletePageAt(currentPage);
+
+  /** The actions for page `index`, shared by the toolbar's page menu and the sidebar. */
+  const pageActions = (index: number): PageActionHandlers => {
+    const pageId = store.doc.pages[index]?.id ?? '';
+    return {
+      insert: (where) => addPageOp(insertPageOp(store.doc, index, where)),
+      duplicate: () => addPageOp(duplicatePageOp(store.doc, index)),
+      changeTemplate: () => setPageDialog({ kind: 'template', pageId }),
+      move: store.doc.pages.length > 1 ? () => setPageDialog({ kind: 'move', pageId }) : undefined,
+      copy: () => setPageDialog({ kind: 'copy', pageId }),
+      remove: store.doc.pages.length > 1 ? () => deletePageAt(index) : undefined,
+    };
+  };
+
+  const movePage = (pageId: string, to: number) => {
+    const op = movePageOp(store.doc, pageId, to);
+    if (op) store.dispatch([op]);
   };
 
   const rename = (title: string) => {
@@ -762,6 +785,15 @@ function EditorInner({
             <Icon name="plus" />
           </button>
           <span className="divider" />
+          <button
+            className={`icon-btn ${sidebarOpen ? 'active' : ''}`}
+            onClick={() => setSidebarOpen((o: boolean) => !o)}
+            aria-pressed={sidebarOpen}
+            aria-label="Page thumbnails"
+            title="Page thumbnails"
+          >
+            <Icon name="sidebar" />
+          </button>
           <button className="icon-btn" onClick={addPage} aria-label="Add page after current" title="Add page">
             <Icon name="addPage" />
           </button>
@@ -774,15 +806,7 @@ function EditorInner({
             </summary>
             {/* Close the menu once an action is chosen. */}
             <div className="menu-pop" onClick={(e) => (e.target as HTMLElement).closest('button') && e.currentTarget.closest('details')?.removeAttribute('open')}>
-              <button onClick={() => insertPage('before')}>Insert page before</button>
-              <button onClick={() => insertPage('after')}>Insert page after</button>
-              <button onClick={duplicatePage}>Duplicate page</button>
-              <button onClick={() => setPageDialog('template')}>Change template…</button>
-              <hr />
-              <button onClick={() => setPageDialog('move')} disabled={doc.pages.length <= 1}>
-                Move to notebook…
-              </button>
-              <button onClick={() => setPageDialog('copy')}>Copy to notebook…</button>
+              <PageMenuItems actions={{ ...pageActions(currentPage), remove: undefined }} />
             </div>
           </details>
           <details className="menu">
@@ -938,6 +962,17 @@ function EditorInner({
         </div>
       )}
 
+      <div className="editor-body">
+      {sidebarOpen && (
+        <PageSidebar
+          pages={doc.pages}
+          docId={doc.id}
+          currentPage={currentPage}
+          onJump={(i) => scrollToPage(i, 'auto')}
+          onMove={movePage}
+          actions={pageActions}
+        />
+      )}
       <div className="canvas-area" ref={areaRef}>
       <div
         ref={scrollerRef}
@@ -981,13 +1016,18 @@ function EditorInner({
           ))}
         </div>
       </div>
-      {pageDialog === 'template' && doc.pages[currentPage] && (
-        <ChangeTemplateDialog page={doc.pages[currentPage]} onCancel={() => setPageDialog(null)} onApply={(c) => void applyTemplate(c).catch((e: Error) => alert(`Could not change the template: ${e.message}`))} />
+      {pageDialog?.kind === 'template' && doc.pages.find((p) => p.id === pageDialog.pageId) && (
+        <ChangeTemplateDialog
+          page={doc.pages.find((p) => p.id === pageDialog.pageId)!}
+          onCancel={() => setPageDialog(null)}
+          onApply={(c) => void applyTemplate(pageDialog.pageId, c).catch((e: Error) => alert(`Could not change the template: ${e.message}`))}
+        />
       )}
-      {(pageDialog === 'move' || pageDialog === 'copy') && (
-        <NotebookPickerDialog currentId={doc.id} mode={pageDialog} onCancel={() => setPageDialog(null)} onPick={(n) => sendPage(n, pageDialog)} />
+      {(pageDialog?.kind === 'move' || pageDialog?.kind === 'copy') && (
+        <NotebookPickerDialog currentId={doc.id} mode={pageDialog.kind} onCancel={() => setPageDialog(null)} onPick={(n) => sendPage(pageDialog.pageId, n, pageDialog.kind as 'move' | 'copy')} />
       )}
       {ruler && <RulerOverlay ruler={ruler} setRuler={setRuler} zoom={zoom} onClose={() => setRuler(null)} />}
+      </div>
       </div>
       {(audioOpen || recState !== 'idle') && (
         <AudioBar

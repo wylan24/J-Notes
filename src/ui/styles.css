@@ -276,7 +276,8 @@ button:disabled { cursor: default; opacity: 0.35; }
 /* ---------- Ruler ---------- */
 :root { --ruler-bg: rgba(250, 250, 248, 0.82); --ruler-tick: rgba(30, 30, 32, 0.55); }
 @media (prefers-color-scheme: dark) { :root { --ruler-bg: rgba(52, 52, 56, 0.85); --ruler-tick: rgba(240, 240, 244, 0.6); } }
-.canvas-area { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
+.editor-body { flex: 1; min-height: 0; display: flex; }
+.canvas-area { flex: 1; min-width: 0; min-height: 0; position: relative; display: flex; flex-direction: column; }
 .ruler {
   position: absolute; z-index: 6; border-radius: 6px; touch-action: none; cursor: grab;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2), 0 4px 14px rgba(0, 0, 0, 0.12); border: 1px solid rgba(0, 0, 0, 0.18);
@@ -410,3 +411,21 @@ button:disabled { cursor: default; opacity: 0.35; }
 .notebook-pick-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu-pop hr { border: 0; border-top: 1px solid var(--border); margin: 4px 6px; }
 .menu-pop button:disabled { color: var(--muted); background: none; }
+
+/* ---------- Page thumbnail sidebar ---------- */
+.sidebar { flex: none; width: 140px; border-right: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; min-height: 0; }
+.sidebar-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; touch-action: pan-y; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.sidebar-scroll.dragging { cursor: grabbing; }
+.sidebar-content { position: relative; }
+.thumb { position: absolute; display: flex; flex-direction: column; cursor: pointer; }
+.thumb-canvas { display: block; width: 100%; flex: 1; min-height: 0; border-radius: 3px; box-shadow: 0 0 0 1px var(--border); background: #fffefb; }
+.thumb.current .thumb-canvas { box-shadow: 0 0 0 2px var(--accent); }
+.thumb.lifted { opacity: 0.35; }
+.thumb-label { height: 22px; flex: none; display: flex; align-items: center; justify-content: center; position: relative; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.thumb.current .thumb-label { color: var(--accent); font-weight: 600; }
+.thumb-more { position: absolute; right: -4px; top: 0; width: 26px; height: 22px; border: 0; background: none; color: var(--muted); display: grid; place-items: center; border-radius: 6px; padding: 0; }
+.thumb-more svg { width: 16px; height: 16px; }
+.thumb-more:hover { background: var(--surface-2); }
+.drop-line { position: absolute; left: 8px; right: 8px; height: 3px; border-radius: 2px; background: var(--accent); pointer-events: none; }
+.thumb-menu { position: fixed; right: auto; min-width: 200px; z-index: 30; }
+.danger-text { color: #c0392b; }

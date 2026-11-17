@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { sizeFor, type NotebookDoc, type Page, type Stroke } from '../src/core/model';
-import { changeTemplateOp, clonePage, duplicatePageOp, insertPageOp, pageBlobIds } from '../src/core/pages';
+import { changeTemplateOp, clonePage, dropTarget, duplicatePageOp, insertPageOp, pageBlobIds, stackLayout, visibleRange } from '../src/core/pages';
+import { applyOp, movePageOp } from '../src/core/ops';
 import { DocumentStore } from '../src/core/store';
 
 const stroke = (id: string, rec?: string): Stroke => ({
@@ -92,5 +93,54 @@ describe('page actions', () => {
   it('duplicates a page right after itself', () => {
     const op = duplicatePageOp(doc(), 0)!;
     expect(op).toMatchObject({ type: 'page.added', index: 1 });
+  });
+});
+
+describe('thumbnail sidebar layout', () => {
+  // Three pages: tall, short (landscape), tall.
+  const heights = [100, 50, 100];
+  const { tops, height } = stackLayout(heights, 10);
+
+  it('stacks thumbnails of mixed heights', () => {
+    expect(tops).toEqual([0, 110, 170]);
+    expect(height).toBe(270);
+    expect(stackLayout([], 10)).toEqual({ tops: [], height: 0 });
+  });
+
+  it('finds only the thumbnails in view', () => {
+    expect(visibleRange(tops, heights, 0, 50)).toEqual([0, 1]);
+    expect(visibleRange(tops, heights, 105, 120)).toEqual([1, 2]);
+    expect(visibleRange(tops, heights, 150, 1000)).toEqual([1, 3]);
+    expect(visibleRange(tops, heights, 2000, 3000)).toEqual([3, 3]);
+  });
+
+  it('keeps the visible range small in a 300-page notebook', () => {
+    const many = Array.from({ length: 300 }, (_, i) => (i % 7 === 3 ? 80 : 180));
+    const layout = stackLayout(many, 12);
+    const [start, end] = visibleRange(layout.tops, many, 20000, 20900);
+    expect(end - start).toBeLessThanOrEqual(7);
+    expect(layout.tops[start] + many[start]).toBeGreaterThanOrEqual(20000);
+    expect(layout.tops[end - 1]).toBeLessThanOrEqual(20900);
+  });
+
+  it('turns a drop position into the gap shown and the move target', () => {
+    // Dragging page 0 down past the middle of page 1 puts it after page 1.
+    expect(dropTarget(tops, heights, 140, 0)).toEqual({ slot: 2, to: 1 });
+    // Above everything / below everything.
+    expect(dropTarget(tops, heights, -20, 2)).toEqual({ slot: 0, to: 0 });
+    expect(dropTarget(tops, heights, 500, 0)).toEqual({ slot: 3, to: 2 });
+    // Dropping onto its own place is no move.
+    expect(dropTarget(tops, heights, 40, 0)).toEqual({ slot: 0, to: 0 });
+  });
+
+  it('reorders by drag as one undoable step', () => {
+    const d: NotebookDoc = { id: 'd', pages: ['a', 'b', 'c'].map((id) => ({ id, template: 'blank', strokes: [], items: [] })) };
+    const store = new DocumentStore(d);
+    const { to } = dropTarget(tops, heights, 500, 0);
+    store.dispatch([movePageOp(store.doc, 'a', to)!]);
+    expect(store.doc.pages.map((p) => p.id)).toEqual(['b', 'c', 'a']);
+    store.undo();
+    expect(store.doc).toEqual(d);
+    expect(applyOp(d, movePageOp(d, 'c', dropTarget(tops, heights, -1, 2).to)!).pages.map((p) => p.id)).toEqual(['c', 'a', 'b']);
   });
 });

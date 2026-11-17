@@ -107,3 +107,38 @@ export function NotebookPickerDialog({
     </div>
   );
 }
+
+/** What can be done to one page. A missing handler shows its item disabled. */
+export interface PageActionHandlers {
+  insert: (where: 'before' | 'after') => void;
+  duplicate: () => void;
+  changeTemplate: () => void;
+  move?: () => void;
+  copy: () => void;
+  remove?: () => void;
+}
+
+/** The items of a page actions menu (toolbar menu and sidebar thumbnails). */
+export function PageMenuItems({ actions, showRemove = false }: { actions: PageActionHandlers; showRemove?: boolean }) {
+  return (
+    <>
+      <button onClick={() => actions.insert('before')}>Insert page before</button>
+      <button onClick={() => actions.insert('after')}>Insert page after</button>
+      <button onClick={actions.duplicate}>Duplicate page</button>
+      <button onClick={actions.changeTemplate}>Change template…</button>
+      <hr />
+      <button onClick={actions.move} disabled={!actions.move}>
+        Move to notebook…
+      </button>
+      <button onClick={actions.copy}>Copy to notebook…</button>
+      {showRemove && (
+        <>
+          <hr />
+          <button className="danger-text" onClick={actions.remove} disabled={!actions.remove}>
+            Delete page
+          </button>
+        </>
+      )}
+    </>
+  );
+}

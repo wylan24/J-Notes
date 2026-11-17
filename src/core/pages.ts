@@ -49,3 +49,41 @@ export function changeTemplateOp(page: Page, choice: Template | PageBackground):
     ? updatePageOp(page, { template: choice, background: undefined })
     : updatePageOp(page, { template: 'blank', background: choice });
 }
+
+// --- Thumbnail sidebar layout ---------------------------------------------------------------
+
+/** Tops of items of the given heights stacked with `gap` between them, and the total height. */
+export function stackLayout(heights: readonly number[], gap: number): { tops: number[]; height: number } {
+  const tops: number[] = [];
+  let y = 0;
+  for (const h of heights) {
+    tops.push(y);
+    y += h + gap;
+  }
+  return { tops, height: Math.max(0, y - gap) };
+}
+
+/** Indices [start, end) of the items that overlap the band [top, bottom]. Tops must be ascending. */
+export function visibleRange(tops: readonly number[], heights: readonly number[], top: number, bottom: number): [number, number] {
+  // Binary search for the first item whose bottom edge is below `top`.
+  let lo = 0, hi = tops.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (tops[mid] + heights[mid] < top) lo = mid + 1;
+    else hi = mid;
+  }
+  let end = lo;
+  while (end < tops.length && tops[end] <= bottom) end++;
+  return [lo, end];
+}
+
+/**
+ * Where a dragged item lands when dropped at `y`.
+ * `slot` is the gap it is shown going into (0..n, in the current order: before item `slot`);
+ * `to` is its index once moved, as `page.moved` expects.
+ */
+export function dropTarget(tops: readonly number[], heights: readonly number[], y: number, from: number): { slot: number; to: number } {
+  let slot = 0;
+  while (slot < tops.length && tops[slot] + heights[slot] / 2 < y) slot++;
+  return { slot, to: slot > from ? slot - 1 : slot };
+}
