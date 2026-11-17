@@ -4,7 +4,7 @@ import { newId } from '../core/ids';
 import { DocumentStore } from '../core/store';
 import { deleteSelectionOps } from '../core/selection';
 import { appendPage, getBlobs, getMeta, listElements, loadDocument, putBlob, saveElement, updateMeta } from '../storage/db';
-import { changeTemplateOp, clonePage, duplicatePageOp, insertPageOp, pageBlobIds } from '../core/pages';
+import { bookmarkedIndices, changeTemplateOp, clonePage, duplicatePageOp, insertPageOp, isBookmarked, pageBlobIds, toggleBookmarkOp } from '../core/pages';
 import { movePageOp } from '../core/ops';
 import { ChangeTemplateDialog, NotebookPickerDialog, PageMenuItems, type PageActionHandlers } from './PageActions';
 import { PageSidebar } from './PageSidebar';
@@ -585,6 +585,12 @@ function EditorInner({
     };
   };
 
+  const toggleBookmark = (pageId: string) => {
+    const op = toggleBookmarkOp(store.doc, pageId);
+    if (op) store.dispatch([op]);
+  };
+  const currentBookmarked = !!doc.pages[currentPage] && isBookmarked(doc, doc.pages[currentPage].id);
+
   const movePage = (pageId: string, to: number) => {
     const op = movePageOp(store.doc, pageId, to);
     if (op) store.dispatch([op]);
@@ -794,6 +800,15 @@ function EditorInner({
           >
             <Icon name="sidebar" />
           </button>
+          <button
+            className={`icon-btn ${currentBookmarked ? 'active' : ''}`}
+            onClick={() => doc.pages[currentPage] && toggleBookmark(doc.pages[currentPage].id)}
+            aria-pressed={currentBookmarked}
+            aria-label={currentBookmarked ? 'Remove bookmark' : 'Bookmark this page'}
+            title={currentBookmarked ? 'Remove bookmark' : 'Bookmark this page'}
+          >
+            <Icon name="bookmark" />
+          </button>
           <button className="icon-btn" onClick={addPage} aria-label="Add page after current" title="Add page">
             <Icon name="addPage" />
           </button>
@@ -971,6 +986,8 @@ function EditorInner({
           onJump={(i) => scrollToPage(i, 'auto')}
           onMove={movePage}
           actions={pageActions}
+          bookmarks={bookmarkedIndices(doc)}
+          onToggleBookmark={toggleBookmark}
         />
       )}
       <div className="canvas-area" ref={areaRef}>

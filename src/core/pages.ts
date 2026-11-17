@@ -2,7 +2,7 @@
 // Each builds ops (or a page) from current state; the editor dispatches them as one undo step.
 import { newId } from './ids';
 import { blankPage, pagePaper, pageSize, type NotebookDoc, type Page, type PageBackground, type Template } from './model';
-import { updatePageOp, type DocOp } from './ops';
+import { updateDocOp, updatePageOp, type DocOp } from './ops';
 
 /** Ids of the blobs (photos, custom template image) a page refers to. */
 export function pageBlobIds(page: Page): string[] {
@@ -86,4 +86,24 @@ export function dropTarget(tops: readonly number[], heights: readonly number[], 
   let slot = 0;
   while (slot < tops.length && tops[slot] + heights[slot] / 2 < y) slot++;
   return { slot, to: slot > from ? slot - 1 : slot };
+}
+
+// --- Bookmarks ----------------------------------------------------------------------------
+
+export function isBookmarked(doc: NotebookDoc, pageId: string): boolean {
+  return doc.bookmarks?.includes(pageId) ?? false;
+}
+
+/** Add or remove a page's bookmark. Removing the last one leaves `bookmarks` absent, as on older notebooks. */
+export function toggleBookmarkOp(doc: NotebookDoc, pageId: string): DocOp | null {
+  const current = doc.bookmarks ?? [];
+  const next = current.includes(pageId) ? current.filter((id) => id !== pageId) : [...current, pageId];
+  return updateDocOp(doc, { bookmarks: next.length ? next : undefined });
+}
+
+/** Indices of bookmarked pages that still exist, in page order. */
+export function bookmarkedIndices(doc: NotebookDoc): number[] {
+  if (!doc.bookmarks?.length) return [];
+  const marked = new Set(doc.bookmarks);
+  return doc.pages.flatMap((p, i) => (marked.has(p.id) ? [i] : []));
 }

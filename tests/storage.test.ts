@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { NotebookMeta } from '../src/core/model';
 import { DocumentStore } from '../src/core/store';
 import { movePageOp, updatePageOp } from '../src/core/ops';
+import { toggleBookmarkOp } from '../src/core/pages';
 import { addSession, appendEvents, appendPage, deleteElement, listElements, renameElement, saveElement, clearSessions, compact, createNotebook, deleteNotebook, getBlob, getBlobs, listSessions, listNotebooks, loadDocument, openDb, putBlob, resetDbForTests } from '../src/storage/db';
 import { Persister } from '../src/storage/persister';
 
@@ -78,6 +79,20 @@ describe('event-sourced storage', () => {
     expect(seq).toBe(2);
     expect([...new Uint8Array((await getBlob('dst', 'photo'))!.bytes)]).toEqual([9, 8]);
     expect((await listNotebooks()).find((n) => n.id === 'dst')!.pageCount).toBe(3);
+  });
+
+  it('keeps bookmarks after reload and after compaction', async () => {
+    const pages = ['a', 'b'].map((id) => ({ id, template: 'blank' as const, strokes: [], items: [] }));
+    await createNotebook({ ...meta('n4'), pageCount: 2 }, { id: 'n4', pages });
+    const { doc, seq } = await loadDocument('n4');
+    const store = new DocumentStore(doc, seq);
+    const persister = new Persister(store, 0);
+    store.dispatch([toggleBookmarkOp(store.doc, 'b')!]);
+    await persister.dispose();
+    expect((await loadDocument('n4')).doc.bookmarks).toEqual(['b']);
+
+    await compact('n4', store.doc, store.seq);
+    expect((await loadDocument('n4')).doc.bookmarks).toEqual(['b']);
   });
 
   it('compaction keeps the document identical and drops old events', async () => {

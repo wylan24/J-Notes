@@ -53,7 +53,12 @@ export function fromFile(raw: unknown): { meta: NotebookMeta; doc: NotebookDoc; 
     }
   }
   return {
-    doc: normalizeDoc({ id, pages: f.doc.pages, ...(Array.isArray(f.doc.recordings) ? { recordings: f.doc.recordings } : {}) }),
+    doc: normalizeDoc({
+      id,
+      pages: f.doc.pages,
+      ...(Array.isArray(f.doc.recordings) ? { recordings: f.doc.recordings } : {}),
+      ...(Array.isArray(f.doc.bookmarks) && f.doc.bookmarks.length ? { bookmarks: f.doc.bookmarks.filter((b) => typeof b === 'string') } : {}),
+    }),
     blobs,
     meta: {
       id,

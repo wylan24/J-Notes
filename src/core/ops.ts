@@ -1,5 +1,5 @@
 import { invert, transformStroke, type Matrix } from './transform';
-import { normalizePage, type ItemPatch, type NotebookDoc, type Page, type PageItem, type PagePatch, type Recording, type Stroke } from './model';
+import { normalizePage, type DocPatch, type ItemPatch, type NotebookDoc, type Page, type PageItem, type PagePatch, type Recording, type Stroke } from './model';
 
 /**
  * Every change to a notebook is one of these operations. Ops carry enough data
@@ -23,6 +23,8 @@ export type DocOp =
   | { type: 'items.removed'; pageId: string; items: PageItem[]; indices: number[] }
   /** `previous` holds the old value of every patched field (undefined where the field was absent). */
   | { type: 'items.updated'; pageId: string; id: string; patch: ItemPatch; previous: ItemPatch }
+  /** Change notebook-level fields (bookmarks). `previous` holds the old values (undefined = absent). */
+  | { type: 'doc.updated'; patch: DocPatch; previous: DocPatch }
   | { type: 'recording.added'; recording: Recording; index?: number }
   | { type: 'recording.removed'; recording: Recording; index: number };
 
@@ -86,6 +88,8 @@ export function applyOp(doc: NotebookDoc, op: DocOp): NotebookDoc {
     }
     case 'page.updated':
       return updatePage(doc, op.pageId, (page) => patchFields(page, op.patch));
+    case 'doc.updated':
+      return patchFields(doc, op.patch);
     case 'strokes.added':
       return updatePage(doc, op.pageId, (page) => ({ ...page, strokes: insertAt(page.strokes, op.strokes, op.indices) }));
     case 'strokes.removed': {
@@ -139,6 +143,8 @@ export function inverseOp(op: DocOp): DocOp {
     case 'page.moved':
       return { ...op, from: op.to, to: op.from };
     case 'page.updated':
+      return { ...op, patch: op.previous, previous: op.patch };
+    case 'doc.updated':
       return { ...op, patch: op.previous, previous: op.patch };
     case 'strokes.added':
       return { type: 'strokes.removed', pageId: op.pageId, strokes: op.strokes, indices: op.indices ?? [] };
@@ -215,6 +221,15 @@ export function updatePageOp(page: Page, patch: PagePatch): DocOp | null {
   if (!keys.length) return null;
   const pick = (src: Record<string, unknown>) => Object.fromEntries(keys.map((k) => [k, src[k]])) as PagePatch;
   return { type: 'page.updated', pageId: page.id, patch: pick(patch as Record<string, unknown>), previous: pick(current) };
+}
+
+/** Build a notebook update op, recording each changed field's current value; null if nothing would change. */
+export function updateDocOp(doc: NotebookDoc, patch: DocPatch): DocOp | null {
+  const current = doc as unknown as Record<string, unknown>;
+  const keys = Object.keys(patch).filter((k) => JSON.stringify(current[k]) !== JSON.stringify((patch as Record<string, unknown>)[k]));
+  if (!keys.length) return null;
+  const pick = (src: Record<string, unknown>) => Object.fromEntries(keys.map((k) => [k, src[k]])) as DocPatch;
+  return { type: 'doc.updated', patch: pick(patch as Record<string, unknown>), previous: pick(current) };
 }
 
 export function replay(doc: NotebookDoc, events: DocEvent[]): NotebookDoc {

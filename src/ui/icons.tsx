@@ -12,6 +12,7 @@ const paths: Record<string, string> = {
   addPage: 'M6 3h8l4 4v14H6zM14 3v4h4M12 11v6M9 14h6',
   pages: 'M9 3h10v14H9zM5 7v14h10',
   sidebar: 'M4 4h16v16H4zM9.5 4v16',
+  bookmark: 'M7 3.5h10v17l-5-4-5 4z',
   trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',
   share: 'M12 3v12M8 7l4-4 4 4M5 13v7h14v-7',
   star: 'M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z',

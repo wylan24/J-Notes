@@ -78,6 +78,8 @@ export function PageSidebar({
   onJump,
   onMove,
   actions,
+  bookmarks,
+  onToggleBookmark,
 }: {
   pages: readonly Page[];
   docId: string;
@@ -85,7 +87,12 @@ export function PageSidebar({
   onJump: (index: number) => void;
   onMove: (pageId: string, to: number) => void;
   actions: (index: number) => PageActionHandlers;
+  /** Indices of bookmarked pages, in page order. */
+  bookmarks: readonly number[];
+  onToggleBookmark: (pageId: string) => void;
 }) {
+  const [tab, setTab] = useState<'pages' | 'bookmarks'>('pages');
+  const marked = useMemo(() => new Set(bookmarks), [bookmarks]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ top: 0, height: 800 });
   const [version, setVersion] = useState(0);
@@ -240,7 +247,38 @@ export function PageSidebar({
 
   return (
     <aside className="sidebar" data-no-gesture aria-label="Pages">
+      <div className="sidebar-tabs" role="tablist">
+        <button role="tab" aria-selected={tab === 'pages'} className={tab === 'pages' ? 'active' : ''} onClick={() => setTab('pages')}>
+          Pages
+        </button>
+        <button role="tab" aria-selected={tab === 'bookmarks'} className={tab === 'bookmarks' ? 'active' : ''} onClick={() => setTab('bookmarks')}>
+          Bookmarks
+        </button>
+      </div>
+      {tab === 'bookmarks' && (
+        <div className="sidebar-scroll bookmark-list" role="tabpanel" aria-label="Bookmarks">
+          {bookmarks.length === 0 ? (
+            <p className="sidebar-empty">Bookmark a page with the bookmark button in the toolbar.</p>
+          ) : (
+            bookmarks.map((i) => (
+              <div key={pages[i].id} className={`thumb static ${i === currentPage ? 'current' : ''}`} style={{ width: THUMB_W, height: heights[i] }}>
+                <button className="thumb-jump" aria-label={`Go to page ${i + 1}`} onClick={() => onJump(i)}>
+                  <Thumb page={pages[i]} docId={docId} version={version} />
+                </button>
+                <div className="thumb-label">
+                  <span>{i + 1}</span>
+                  <button className="thumb-more" aria-label={`Remove bookmark from page ${i + 1}`} title="Remove bookmark" onClick={() => onToggleBookmark(pages[i].id)}>
+                    <Icon name="close" />
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+      {/* Kept mounted (hidden) on the Bookmarks tab, so its scroll position and listeners survive. */}
       <div
+        hidden={tab !== 'pages'}
         ref={scrollRef}
         className={`sidebar-scroll ${drag ? 'dragging' : ''}`}
         onScroll={(e) => {
@@ -266,6 +304,7 @@ export function PageSidebar({
                 aria-current={i === currentPage ? 'page' : undefined}
               >
                 <Thumb page={page} docId={docId} version={version} />
+                {marked.has(i) && <span className="thumb-ribbon" aria-label="Bookmarked" />}
                 <div className="thumb-label">
                   <span>{i + 1}</span>
                   <button

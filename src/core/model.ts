@@ -196,7 +196,12 @@ export interface NotebookDoc {
   pages: Page[];
   /** Absent on notebooks saved before recordings existed. */
   recordings?: Recording[];
+  /** Ids of bookmarked pages, in the order they were bookmarked. Absent when there are none. */
+  bookmarks?: string[];
 }
+
+/** Notebook-level fields a `doc.updated` op can change. An undefined value means the field is absent. */
+export type DocPatch = Partial<Pick<NotebookDoc, 'bookmarks'>>;
 
 /** Library-level projection of a notebook (what the library grid shows). */
 export interface NotebookMeta {

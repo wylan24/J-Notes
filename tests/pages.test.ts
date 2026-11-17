@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { sizeFor, type NotebookDoc, type Page, type Stroke } from '../src/core/model';
-import { changeTemplateOp, clonePage, dropTarget, duplicatePageOp, insertPageOp, pageBlobIds, stackLayout, visibleRange } from '../src/core/pages';
-import { applyOp, movePageOp } from '../src/core/ops';
+import { bookmarkedIndices, changeTemplateOp, clonePage, dropTarget, isBookmarked, toggleBookmarkOp, duplicatePageOp, insertPageOp, pageBlobIds, stackLayout, visibleRange } from '../src/core/pages';
+import { applyOp, inverseOp, movePageOp, replay } from '../src/core/ops';
+import { fromFile, toFile } from '../src/io/notebookFile';
 import { DocumentStore } from '../src/core/store';
 
 const stroke = (id: string, rec?: string): Stroke => ({
@@ -142,5 +143,48 @@ describe('thumbnail sidebar layout', () => {
     store.undo();
     expect(store.doc).toEqual(d);
     expect(applyOp(d, movePageOp(d, 'c', dropTarget(tops, heights, -1, 2).to)!).pages.map((p) => p.id)).toEqual(['c', 'a', 'b']);
+  });
+});
+
+describe('bookmarks', () => {
+  const three = (): NotebookDoc => ({ id: 'd', pages: ['a', 'b', 'c'].map((id) => ({ id, template: 'blank', strokes: [], items: [] })) });
+
+  it('toggles a bookmark with one undoable doc.updated op', () => {
+    const d = three();
+    const op = toggleBookmarkOp(d, 'c')!;
+    expect(op).toEqual({ type: 'doc.updated', patch: { bookmarks: ['c'] }, previous: { bookmarks: undefined } });
+    const marked = applyOp(d, op);
+    expect(isBookmarked(marked, 'c')).toBe(true);
+    expect(applyOp(marked, inverseOp(op))).toEqual(d); // `bookmarks` absent again, not []
+
+    const unmarked = applyOp(marked, toggleBookmarkOp(marked, 'c')!);
+    expect('bookmarks' in unmarked).toBe(false);
+  });
+
+  it('lists bookmarked pages in page order and follows moves', () => {
+    let d = three();
+    for (const id of ['c', 'a']) d = applyOp(d, toggleBookmarkOp(d, id)!);
+    expect(bookmarkedIndices(d)).toEqual([0, 2]);
+    d = applyOp(d, movePageOp(d, 'c', 1)!);
+    expect(bookmarkedIndices(d)).toEqual([0, 1]);
+    // A deleted page's bookmark is skipped, and comes back if the deletion is undone.
+    const removed = applyOp(d, { type: 'page.removed', page: d.pages[0], index: 0 });
+    expect(bookmarkedIndices(removed)).toEqual([0]);
+  });
+
+  it('replays from the log', () => {
+    const d = three();
+    const op = toggleBookmarkOp(d, 'b')!;
+    expect(replay(d, [{ docId: 'd', seq: 1, ts: 0, op }]).bookmarks).toEqual(['b']);
+  });
+
+  it('survives export and import', () => {
+    const d = applyOp(three(), toggleBookmarkOp(three(), 'b')!);
+    const meta = { id: 'd', title: 'T', cover: '#000', template: 'blank' as const, createdAt: 1, updatedAt: 1, favourite: false, trashedAt: null, pageCount: 3 };
+    const back = fromFile(JSON.parse(JSON.stringify(toFile(meta, d))));
+    expect(back.doc.bookmarks).toEqual(['b']);
+    expect(bookmarkedIndices(back.doc)).toEqual([1]);
+    // Files without bookmarks import without the field.
+    expect('bookmarks' in fromFile(JSON.parse(JSON.stringify(toFile(meta, three())))).doc).toBe(false);
   });
 });
