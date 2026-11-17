@@ -1,5 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import type { NotebookDoc, Stroke } from '../src/core/model';
+import {
+  normalizePage,
+  orientationOf,
+  PAGE_H,
+  PAGE_W,
+  pageIndexAt,
+  pagePaper,
+  pageSize,
+  pageTops,
+  sizeFor,
+  type NotebookDoc,
+  type NotebookMeta,
+  type Page,
+  type Stroke,
+} from '../src/core/model';
+import { fromFile, toFile } from '../src/io/notebookFile';
+import { paintPage, PAPER_STYLES } from '../src/render/page';
+import { newSticky } from '../src/core/items';
+import { clampTarget } from '../src/core/zoomWindow';
 import { applyOp, inverseOp, removeStrokesOp, replay, type DocOp } from '../src/core/ops';
 import { DocumentStore } from '../src/core/store';
 import { strokeHitsCircle, strokesInLasso } from '../src/core/geometry';
@@ -114,5 +132,67 @@ describe('geometry', () => {
     expect(detectLine(wobbly)).not.toBeNull();
     const arc = Array.from({ length: 30 }, (_, i) => ({ x: Math.cos(i / 10) * 100, y: Math.sin(i / 10) * 100, p: 0.5 }));
     expect(detectLine(arc)).toBeNull();
+  });
+});
+
+describe('page size and paper', () => {
+  const v2Page = { id: 'p', template: 'ruled', strokes: [], items: [] } as Page;
+  const a5Yellow: Page = { id: 'q', template: 'ruled', strokes: [], items: [], size: sizeFor('a5', 'landscape'), paper: 'yellow' };
+
+  it('reads pages saved before sizes existed as A4 portrait on white', () => {
+    expect(pageSize(v2Page)).toEqual({ w: PAGE_W, h: PAGE_H });
+    expect(pagePaper(v2Page)).toBe('white');
+    expect(normalizePage(v2Page)).toBe(v2Page); // left untouched, so old files round-trip unchanged
+  });
+
+  it('builds landscape sizes by swapping the sides', () => {
+    expect(sizeFor('a5', 'portrait')).toEqual({ w: 559, h: 794 });
+    expect(pageSize(a5Yellow)).toEqual({ w: 794, h: 559 });
+    expect(orientationOf(pageSize(a5Yellow))).toBe('landscape');
+    expect(pagePaper(a5Yellow)).toBe('yellow');
+  });
+
+  it('opens a version-2 file unchanged and keeps sizes through export and import', () => {
+    const v2 = { format: 'jnotes-notebook', version: 2, title: 'Old', cover: '#000', template: 'ruled', doc: { id: 'x', pages: [v2Page] } };
+    expect(fromFile(JSON.parse(JSON.stringify(v2))).doc.pages).toEqual([v2Page]);
+    const meta: NotebookMeta = { id: 'x', title: 'T', cover: '#000', template: 'ruled', createdAt: 1, updatedAt: 1, favourite: false, trashedAt: null, pageCount: 1 };
+    const round = fromFile(JSON.parse(JSON.stringify(toFile(meta, { id: 'x', pages: [a5Yellow] }))));
+    expect(round.doc.pages).toEqual([a5Yellow]);
+  });
+
+  it('paints an A5 landscape yellow page at its own size', () => {
+    const fills: string[] = [];
+    const ctx = new Proxy({} as Record<string | symbol, unknown>, {
+      get: (t, k) => (k in t ? t[k] : () => {}),
+      set: (t, k, v) => {
+        if (k === 'fillStyle') fills.push(v as string);
+        t[k] = v;
+        return true;
+      },
+    });
+    const canvas = { width: 0, height: 0, getContext: () => ctx } as unknown as HTMLCanvasElement;
+    paintPage(canvas, a5Yellow, 2, 1); // the PNG export's scale
+    expect([canvas.width, canvas.height]).toEqual([794 * 2, 559 * 2]);
+    expect(fills[0]).toBe(PAPER_STYLES.yellow.fill);
+  });
+
+  it('stacks pages of different heights for scrolling', () => {
+    const pages = [{}, { size: sizeFor('a5', 'landscape') }, {}];
+    const { tops, height } = pageTops(pages, 0.5, 10);
+    expect(tops).toEqual([0, 1123 / 2 + 10, 1123 / 2 + 10 + 559 / 2 + 10]);
+    expect(height).toBe(1123 + 559 / 2 + 20);
+    expect(pageIndexAt(tops, 0)).toBe(0);
+    expect(pageIndexAt(tops, tops[1] - 1)).toBe(0);
+    expect(pageIndexAt(tops, tops[1])).toBe(1);
+    expect(pageIndexAt(tops, 1e9)).toBe(2);
+  });
+
+  it('keeps new items and the zoom window on a smaller page', () => {
+    const size = sizeFor('a5', 'landscape');
+    const s = newSticky({ x: 2000, y: 2000 }, '#ff0', size);
+    expect([s.x + s.w, s.y + s.h]).toEqual([size.w, size.h]);
+    const t = clampTarget({ pageId: 'q', x: 5000, y: 5000, w: 280, h: 80 }, size);
+    expect(t.x + t.w).toBe(size.w);
+    expect(t.y + t.h).toBe(size.h);
   });
 });

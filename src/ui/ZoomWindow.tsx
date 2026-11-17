@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { InputPoint, Page, Stroke } from '../core/model';
+import { pageSize, type InputPoint, type Page, type Stroke } from '../core/model';
 import type { DocumentStore } from '../core/store';
 import { advance, back, newLine, panelToPage, resizeTarget, shouldAdvance, ZOOM_ASPECT, type ZoomTarget } from '../core/zoomWindow';
 import { paintRegion } from '../render/page';
@@ -128,22 +128,22 @@ export function ZoomWindow({ store, page, target, setTarget, tool, penOnly, onCl
     if (!commit) return paint();
     store.dispatch([{ type: 'strokes.added', pageId: targetRef.current.pageId, strokes: [a.stroke] }]);
     if (shouldAdvance(a.maxX, size.w)) {
-      advanceTimer.current = setTimeout(() => setTarget(advance(targetRef.current, page.template)), ADVANCE_DELAY_MS);
+      advanceTimer.current = setTimeout(() => setTarget(advance(targetRef.current, page.template, pageSize(page))), ADVANCE_DELAY_MS);
     }
   };
 
-  const step = (w: number) => setTarget(resizeTarget(target, w));
+  const step = (w: number) => setTarget(resizeTarget(target, w, pageSize(page)));
 
   return (
     <div className="zoom-window" data-no-gesture>
       <div className="zoom-bar">
-        <button className="icon-btn sm" aria-label="Move back along the line" title="Back" onClick={() => setTarget(back(target))}>
+        <button className="icon-btn sm" aria-label="Move back along the line" title="Back" onClick={() => setTarget(back(target, pageSize(page)))}>
           <Icon name="back" />
         </button>
-        <button className="icon-btn sm" aria-label="Move along the line" title="Forward" onClick={() => setTarget(advance(target, page.template))}>
+        <button className="icon-btn sm" aria-label="Move along the line" title="Forward" onClick={() => setTarget(advance(target, page.template, pageSize(page)))}>
           <Icon name="forward" />
         </button>
-        <button className="icon-btn sm" aria-label="Next line" title="New line" onClick={() => setTarget(newLine(target, page.template))}>
+        <button className="icon-btn sm" aria-label="Next line" title="New line" onClick={() => setTarget(newLine(target, page.template, pageSize(page)))}>
           <Icon name="newline" />
         </button>
         <span className="divider" />

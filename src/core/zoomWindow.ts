@@ -1,6 +1,6 @@
 // The zoom window: a magnified panel showing a target box on a page. Writing in the panel lands
 // in the box, and the box moves along the line as you write, like a typewriter carriage.
-import { PAGE_H, PAGE_W, type Template } from './model';
+import { DEFAULT_PAGE_SIZE, type PageSize, type Template } from './model';
 import type { Vec } from './geometry';
 
 /** Panel width ÷ height; the target box has the same shape. */
@@ -25,20 +25,22 @@ export function leftMargin(template: Template): number {
   return template === 'ruled' ? 104 : 32;
 }
 
-export function clampTarget(t: ZoomTarget): ZoomTarget {
-  const w = Math.min(MAX_TARGET_W, Math.max(MIN_TARGET_W, t.w));
+// Every function that moves or sizes the box takes the size of the page it is on, so the box stays on it.
+
+export function clampTarget(t: ZoomTarget, size: PageSize = DEFAULT_PAGE_SIZE): ZoomTarget {
+  const w = Math.min(MAX_TARGET_W, size.w, Math.max(MIN_TARGET_W, t.w));
   const h = w / ZOOM_ASPECT;
-  return { ...t, w, h, x: Math.min(Math.max(0, t.x), PAGE_W - w), y: Math.min(Math.max(0, t.y), PAGE_H - h) };
+  return { ...t, w, h, x: Math.min(Math.max(0, t.x), size.w - w), y: Math.min(Math.max(0, t.y), size.h - h) };
 }
 
-export function defaultTarget(pageId: string, template: Template, w = 280): ZoomTarget {
-  return clampTarget({ pageId, x: leftMargin(template), y: template === 'ruled' ? 104 : 80, w, h: w / ZOOM_ASPECT });
+export function defaultTarget(pageId: string, template: Template, w = 280, size: PageSize = DEFAULT_PAGE_SIZE): ZoomTarget {
+  return clampTarget({ pageId, x: leftMargin(template), y: template === 'ruled' ? 104 : 80, w, h: w / ZOOM_ASPECT }, size);
 }
 
 /** Resize about the box's left-middle, so the current line stays put. */
-export function resizeTarget(t: ZoomTarget, w: number): ZoomTarget {
-  const next = clampTarget({ ...t, w });
-  return clampTarget({ ...next, y: t.y + t.h / 2 - next.h / 2 });
+export function resizeTarget(t: ZoomTarget, w: number, size: PageSize = DEFAULT_PAGE_SIZE): ZoomTarget {
+  const next = clampTarget({ ...t, w }, size);
+  return clampTarget({ ...next, y: t.y + t.h / 2 - next.h / 2 }, size);
 }
 
 export function panelToPage(pt: Vec, t: ZoomTarget, panelW: number): Vec {
@@ -54,18 +56,18 @@ export function shouldAdvance(maxPanelX: number, panelW: number): boolean {
 const PITCH: Partial<Record<Template, number>> = { ruled: 32, grid: 28 };
 
 /** Down one box height, rounded to whole lines on ruled and grid paper so the box stays on the lines. */
-export function newLine(t: ZoomTarget, template: Template): ZoomTarget {
+export function newLine(t: ZoomTarget, template: Template, size: PageSize = DEFAULT_PAGE_SIZE): ZoomTarget {
   const pitch = PITCH[template];
   const step = pitch ? Math.max(pitch, Math.round(t.h / pitch) * pitch) : t.h;
-  return clampTarget({ ...t, x: leftMargin(template), y: t.y + step });
+  return clampTarget({ ...t, x: leftMargin(template), y: t.y + step }, size);
 }
 
 /** Move along the line; past the right edge of the page, wrap to the next line. */
-export function advance(t: ZoomTarget, template: Template): ZoomTarget {
+export function advance(t: ZoomTarget, template: Template, size: PageSize = DEFAULT_PAGE_SIZE): ZoomTarget {
   const x = t.x + t.w * STEP;
-  return x + t.w > PAGE_W - 8 ? newLine(t, template) : { ...t, x };
+  return x + t.w > size.w - 8 ? newLine(t, template, size) : { ...t, x };
 }
 
-export function back(t: ZoomTarget): ZoomTarget {
-  return clampTarget({ ...t, x: t.x - t.w * STEP });
+export function back(t: ZoomTarget, size: PageSize = DEFAULT_PAGE_SIZE): ZoomTarget {
+  return clampTarget({ ...t, x: t.x - t.w * STEP }, size);
 }

@@ -1,8 +1,37 @@
 // Document model. Plain data only — no DOM — so it can be tested in Node,
 // replayed from the event log, and (later) moved into a worker or WASM core.
 
-export const PAGE_W = 794; // A4 at 96 dpi
-export const PAGE_H = 1123;
+/** Page geometry is in page units: CSS px at 96 dpi, so 1 unit = 1/96 in. */
+export interface PageSize {
+  w: number;
+  h: number;
+}
+
+/** Preset paper sizes, portrait. */
+export const PAGE_SIZES = {
+  a4: { w: 794, h: 1123 },
+  a5: { w: 559, h: 794 },
+  letter: { w: 816, h: 1056 },
+} as const satisfies Record<string, PageSize>;
+export type PageSizePreset = keyof typeof PAGE_SIZES;
+export type Orientation = 'portrait' | 'landscape';
+
+/** The size every page had before sizes existed, and the default for new pages. */
+export const DEFAULT_PAGE_SIZE: PageSize = PAGE_SIZES.a4;
+export const PAGE_W = DEFAULT_PAGE_SIZE.w;
+export const PAGE_H = DEFAULT_PAGE_SIZE.h;
+
+export function sizeFor(preset: PageSizePreset, orientation: Orientation): PageSize {
+  const { w, h } = PAGE_SIZES[preset];
+  return orientation === 'landscape' ? { w: h, h: w } : { w, h };
+}
+
+export function orientationOf(size: PageSize): Orientation {
+  return size.w > size.h ? 'landscape' : 'portrait';
+}
+
+export type Paper = 'white' | 'yellow' | 'dark';
+export const DEFAULT_PAPER: Paper = 'white';
 
 export type InkTool = 'pen' | 'highlighter';
 export type ToolKind = InkTool | 'shapes' | 'text' | 'sticky' | 'eraser' | 'lasso' | 'laser';
@@ -85,12 +114,47 @@ export type ItemPatch = Partial<Omit<TextItem, 'id' | 'kind'> & Omit<ImageItem, 
 export interface Page {
   id: string;
   template: Template;
+  /** Absent on pages saved before sizes existed (= A4 portrait); read it with `pageSize`. */
+  size?: PageSize;
+  /** Absent on pages saved before paper colours existed (= white); read it with `pagePaper`. */
+  paper?: Paper;
   strokes: Stroke[];
   /** Text boxes, images and sticky notes, in z-order. */
   items: PageItem[];
 }
 
-/** Pages saved before items existed have no `items`; give them an empty list. */
+export function pageSize(page: Pick<Page, 'size'>): PageSize {
+  const s = page.size;
+  return s && s.w > 0 && s.h > 0 ? s : DEFAULT_PAGE_SIZE;
+}
+
+export function pagePaper(page: Pick<Page, 'paper'>): Paper {
+  return page.paper === 'yellow' || page.paper === 'dark' ? page.paper : DEFAULT_PAPER;
+}
+
+/** Top edge of each page in a vertical stack, in CSS px at `zoom`, plus the total height. */
+export function pageTops(pages: readonly Pick<Page, 'size'>[], zoom: number, gap: number): { tops: number[]; height: number } {
+  const tops: number[] = [];
+  let y = 0;
+  for (const p of pages) {
+    tops.push(y);
+    y += pageSize(p).h * zoom + gap;
+  }
+  return { tops, height: Math.max(0, y - gap) };
+}
+
+/** Index of the page whose slot (page plus the gap below it) contains `y`, clamped to the stack. */
+export function pageIndexAt(tops: readonly number[], y: number): number {
+  let i = 0;
+  while (i + 1 < tops.length && tops[i + 1] <= y) i++;
+  return i;
+}
+
+/**
+ * Pages saved before items existed have no `items`; give them an empty list.
+ * Missing `size` and `paper` are left absent (they read as A4 portrait, white) so old pages
+ * round-trip unchanged.
+ */
 export function normalizePage(page: Page): Page {
   return Array.isArray(page.items) ? page : { ...page, items: [] };
 }

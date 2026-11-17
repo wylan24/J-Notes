@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react';
 import {
-  PAGE_H,
-  PAGE_W,
+  pagePaper,
+  pageSize,
   type EraseMode,
   type InputPoint,
   type Page,
@@ -34,7 +34,7 @@ import { rotateAbout, scaleAbout, snapAngle, transformBounds, transformItem, tra
 import type { Bounds } from '../core/geometry';
 import { replaceStrokesOps, splitStroke } from '../core/erase';
 import type { DocumentStore } from '../core/store';
-import { paintPage, paintStrokes } from '../render/page';
+import { paintPage, paintStrokes, PAPER_STYLES } from '../render/page';
 import { imageResolver, measurer, onImagesLoaded } from '../render/items';
 import { buildStrokePath } from '../render/stroke';
 
@@ -251,6 +251,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
 
   const dpr = Math.min(window.devicePixelRatio || 1, 3);
   const scale = zoom;
+  const size = pageSize(page);
   const selected = selection?.pageId === page.id ? selection : null;
   const images = imageResolver(store.doc.id);
 
@@ -306,8 +307,8 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   // --- Live (wet-ink) layer -------------------------------------------------
   const liveCtx = () => {
     const c = liveRef.current!;
-    const w = Math.round(PAGE_W * scale * dpr);
-    const h = Math.round(PAGE_H * scale * dpr);
+    const w = Math.round(size.w * scale * dpr);
+    const h = Math.round(size.h * scale * dpr);
     if (c.width !== w || c.height !== h) {
       c.width = w;
       c.height = h;
@@ -315,7 +316,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     const ctx = c.getContext('2d')!;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    ctx.setTransform(w / PAGE_W, 0, 0, h / PAGE_H, 0, 0);
+    ctx.setTransform(w / size.w, 0, 0, h / size.h, 0, 0);
     return ctx;
   };
 
@@ -457,14 +458,14 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   const tapItemTool = (pt: Vec) => {
     if (tool.kind === 'text') {
       const hit = itemAt(pageRef.current, pt, ['text']);
-      setEditing(hit ? { item: hit as TextItem, isNew: false } : { item: newText(pt, tool.text), isNew: true });
+      setEditing(hit ? { item: hit as TextItem, isNew: false } : { item: newText(pt, tool.text, size), isNew: true });
     } else {
       const hit = itemAt(pageRef.current, pt, ['sticky']) as StickyItem | null;
       if (hit?.collapsed) {
         const op = updateItemOp(pageRef.current, hit.id, { collapsed: false });
         if (op) store.dispatch([op]);
       } else {
-        setEditing(hit ? { item: hit, isNew: false } : { item: newSticky(pt, tool.stickyColor), isNew: true });
+        setEditing(hit ? { item: hit, isNew: false } : { item: newSticky(pt, tool.stickyColor, size), isNew: true });
       }
     }
   };
@@ -472,7 +473,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   // --- Input -----------------------------------------------------------------
   const toPage = (e: { clientX: number; clientY: number; pressure: number }, pointerType: string): InputPoint => {
     const r = liveRef.current!.getBoundingClientRect();
-    const k = PAGE_W / r.width;
+    const k = size.w / r.width;
     return {
       x: (e.clientX - r.left) * k,
       y: (e.clientY - r.top) * k,
@@ -487,7 +488,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     const edges = rulerEdges?.();
     if (!edges || !liveRef.current) return null;
     const r = liveRef.current.getBoundingClientRect();
-    const k = PAGE_W / r.width;
+    const k = size.w / r.width;
     const toPagePt = (v: Vec) => ({ x: (v.x - r.left) * k, y: (v.y - r.top) * k });
     return edgeNear(pt, edges.map((e) => mapEdge(e, toPagePt, k)), RULER_REACH_PX * k);
   };
@@ -714,7 +715,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   // --- Resize and rotate handles (lasso selections) ----------------------------------
   const pagePoint = (e: { clientX: number; clientY: number }): Vec => {
     const r = liveRef.current!.getBoundingClientRect();
-    const k = PAGE_W / r.width;
+    const k = size.w / r.width;
     return { x: (e.clientX - r.left) * k, y: (e.clientY - r.top) * k };
   };
 
@@ -899,18 +900,18 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   const onTargetMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const d = targetDrag.current;
     if (!d || !zoomTarget || e.pointerId !== d.pointerId) return;
-    setZoomTarget?.(clampTarget({ ...zoomTarget, x: d.x + (e.clientX - d.sx) / scale, y: d.y + (e.clientY - d.sy) / scale }));
+    setZoomTarget?.(clampTarget({ ...zoomTarget, x: d.x + (e.clientX - d.sx) / scale, y: d.y + (e.clientY - d.sy) / scale }, size));
   };
   const onTargetUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (targetDrag.current?.pointerId === e.pointerId) targetDrag.current = null;
   };
   const showTarget = zoomTarget?.pageId === page.id ? zoomTarget : null;
 
-  const cssW = PAGE_W * scale;
-  const cssH = PAGE_H * scale;
+  const cssW = size.w * scale;
+  const cssH = size.h * scale;
 
   return (
-    <div ref={wrapRef} className="page" data-page-id={page.id} style={{ width: cssW, height: cssH }}>
+    <div ref={wrapRef} className="page" data-page-id={page.id} style={{ width: cssW, height: cssH, background: PAPER_STYLES[pagePaper(page)].fill }}>
       <canvas ref={baseRef} className="page-layer" />
       <canvas
         ref={liveRef}

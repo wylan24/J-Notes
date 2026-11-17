@@ -1,6 +1,6 @@
 // Geometry, layout and factories for page items (text boxes, images, sticky notes).
 // Pure: text measuring is passed in, so this runs in Node tests and the renderer alike.
-import { PAGE_H, PAGE_W, type ImageItem, type Page, type PageItem, type StickyItem, type TextItem } from './model';
+import { DEFAULT_PAGE_SIZE, type ImageItem, type PageSize, type Page, type PageItem, type StickyItem, type TextItem } from './model';
 import type { Bounds, Vec } from './geometry';
 import { newId } from './ids';
 
@@ -87,34 +87,34 @@ export function itemAt(page: Page, pt: Vec, kinds?: PageItem['kind'][]): PageIte
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 /** Keep a w×h box on the page. */
-function onPage(x: number, y: number, w: number, h: number): Vec {
-  return { x: clamp(x, 0, Math.max(0, PAGE_W - w)), y: clamp(y, 0, Math.max(0, PAGE_H - h)) };
+function onPage(x: number, y: number, w: number, h: number, size: PageSize): Vec {
+  return { x: clamp(x, 0, Math.max(0, size.w - w)), y: clamp(y, 0, Math.max(0, size.h - h)) };
 }
 
 /** A new, empty text box whose first line sits on `pt`. */
-export function newText(pt: Vec, style: TextStyle): TextItem {
-  const w = clamp(PAGE_W - pt.x - 16, 80, 280);
+export function newText(pt: Vec, style: TextStyle, size: PageSize = DEFAULT_PAGE_SIZE): TextItem {
+  const w = clamp(size.w - pt.x - 16, 80, 280);
   const h = style.size * LINE_HEIGHT + 2 * TEXT_PAD;
-  const at = onPage(pt.x - TEXT_PAD, pt.y - h / 2, w, h);
+  const at = onPage(pt.x - TEXT_PAD, pt.y - h / 2, w, h, size);
   return { id: newId(), kind: 'text', ...at, w, h, text: '', ...style };
 }
 
-export function newSticky(center: Vec, color: string): StickyItem {
-  const size = 180;
-  const at = onPage(center.x - size / 2, center.y - size / 2, size, size);
-  return { id: newId(), kind: 'sticky', ...at, w: size, h: size, text: '', color, collapsed: false };
+export function newSticky(center: Vec, color: string, size: PageSize = DEFAULT_PAGE_SIZE): StickyItem {
+  const side = 180;
+  const at = onPage(center.x - side / 2, center.y - side / 2, side, side, size);
+  return { id: newId(), kind: 'sticky', ...at, w: side, h: side, text: '', color, collapsed: false };
 }
 
 /** Size and place an image of the given natural size, centred on `center`, scaled down to fit the page. */
-export function fitImage(naturalW: number, naturalH: number, center: Vec): { x: number; y: number; w: number; h: number } {
-  const k = Math.min(1, (PAGE_W * 0.7) / naturalW, (PAGE_H * 0.5) / naturalH);
+export function fitImage(naturalW: number, naturalH: number, center: Vec, size: PageSize = DEFAULT_PAGE_SIZE): { x: number; y: number; w: number; h: number } {
+  const k = Math.min(1, (size.w * 0.7) / naturalW, (size.h * 0.5) / naturalH);
   const w = Math.max(1, naturalW * k);
   const h = Math.max(1, naturalH * k);
-  return { ...onPage(center.x - w / 2, center.y - h / 2, w, h), w, h };
+  return { ...onPage(center.x - w / 2, center.y - h / 2, w, h, size), w, h };
 }
 
-export function newImage(blobId: string, naturalW: number, naturalH: number, center: Vec): ImageItem {
-  return { id: newId(), kind: 'image', blobId, ...fitImage(naturalW, naturalH, center) };
+export function newImage(blobId: string, naturalW: number, naturalH: number, center: Vec, size: PageSize = DEFAULT_PAGE_SIZE): ImageItem {
+  return { id: newId(), kind: 'image', blobId, ...fitImage(naturalW, naturalH, center, size) };
 }
 
 /**

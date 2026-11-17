@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { PAGE_H, type EraseMode, type InkTool, type NotebookMeta, type PenStyle, type ToolKind } from '../core/model';
+import { pageIndexAt, pageSize, pageTops, type EraseMode, type InkTool, type NotebookMeta, type PenStyle, type ToolKind } from '../core/model';
 import { newId } from '../core/ids';
 import { DocumentStore } from '../core/store';
 import { deleteSelectionOps } from '../core/selection';
@@ -349,7 +349,7 @@ function EditorInner({
   const toggleZoomWindow = () => {
     if (zoomTarget) return setZoomTarget(null);
     const page = store.doc.pages[currentPage];
-    if (page) setZoomTarget(defaultTarget(page.id, page.template));
+    if (page) setZoomTarget(defaultTarget(page.id, page.template, undefined, pageSize(page)));
   };
   const zoomPage = zoomTarget ? doc.pages.find((p) => p.id === zoomTarget.pageId) : undefined;
   // The page under the zoom window was deleted.
@@ -391,6 +391,7 @@ function EditorInner({
     const images = files.filter(isImageFile);
     const target = photoTarget(clientX, clientY);
     if (!images.length || !target) return;
+    const size = pageSize(store.doc.pages.find((p) => p.id === target.pageId) ?? {});
     const items: PageItem[] = [];
     for (const [i, file] of images.entries()) {
       try {
@@ -399,7 +400,7 @@ function EditorInner({
         await putBlob({ docId: store.doc.id, id: blobId, type: prepared.type, bytes: prepared.bytes });
         primeImage(store.doc.id, blobId, prepared.img);
         // Several photos at once are fanned out so they don't stack exactly.
-        items.push(newImage(blobId, prepared.width, prepared.height, { x: target.x + i * 24, y: target.y + i * 24 }));
+        items.push(newImage(blobId, prepared.width, prepared.height, { x: target.x + i * 24, y: target.y + i * 24 }, size));
       } catch (e) {
         alert(`Could not add ${file.name || 'the image'}: ${(e as Error).message}`);
       }
@@ -482,7 +483,7 @@ function EditorInner({
     if (!target) return false;
     // Photos are stored per notebook, so copy the element's into this one first.
     for (const b of el.blobs) await putBlob({ docId: store.doc.id, ...b });
-    const placed = placeElement(el, target.pageId, target);
+    const placed = placeElement(el, target.pageId, target, pageSize(store.doc.pages.find((p) => p.id === target.pageId) ?? {}));
     if (!placed.ops.length) return false;
     store.dispatch(placed.ops);
     setToolKind('lasso');
@@ -508,10 +509,13 @@ function EditorInner({
 
   const addPage = () => {
     const index = Math.min(currentPage + 1, doc.pages.length);
-    store.dispatch([{ type: 'page.added', index, page: { id: newId(), template: meta.template, strokes: [], items: [] } }]);
+    // A new page takes the size and paper of the page it follows.
+    const prev = doc.pages[currentPage];
+    const page = { id: newId(), template: meta.template, strokes: [], items: [], ...(prev?.size && { size: prev.size }), ...(prev?.paper && { paper: prev.paper }) };
+    store.dispatch([{ type: 'page.added', index, page }]);
     requestAnimationFrame(() => {
       const el = scrollerRef.current;
-      if (el) el.scrollTo({ top: index * (PAGE_H * zoom + PAGE_GAP), behavior: 'smooth' });
+      if (el) el.scrollTo({ top: pageTops(store.doc.pages, zoom, PAGE_GAP).tops[index] ?? 0, behavior: 'smooth' });
     });
   };
 
@@ -654,8 +658,7 @@ function EditorInner({
   const onScroll = () => {
     const el = scrollerRef.current;
     if (!el) return;
-    const stride = PAGE_H * zoom + PAGE_GAP;
-    setCurrentPage(Math.max(0, Math.min(doc.pages.length - 1, Math.floor((el.scrollTop + el.clientHeight / 2) / stride))));
+    setCurrentPage(pageIndexAt(pageTops(doc.pages, zoom, PAGE_GAP).tops, el.scrollTop + el.clientHeight / 2));
   };
 
   return (

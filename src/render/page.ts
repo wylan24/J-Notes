@@ -1,46 +1,52 @@
-import { PAGE_H, PAGE_W, type Page, type Stroke, type Template } from '../core/model';
+import { pagePaper, pageSize, type Page, type PageSize, type Paper, type Stroke, type Template } from '../core/model';
 import { paintStroke } from './stroke';
 import { ensureImage, imageResolver, paintItems, type ImageResolver, type ItemPaintOptions } from './items';
 
-export const PAPER = '#fffefb';
+/** Paper and template-line colours for each paper colour. */
+export const PAPER_STYLES: Record<Paper, { fill: string; rule: string; margin: string; grid: string; dot: string }> = {
+  white: { fill: '#fffefb', rule: '#c9d6e8', margin: '#f0b4b4', grid: '#dde3ec', dot: '#b9c2cf' },
+  yellow: { fill: '#fdf5d3', rule: '#c4cfd9', margin: '#eaa79f', grid: '#e2dcc0', dot: '#bdb59a' },
+  dark: { fill: '#26282c', rule: '#3d4a5c', margin: '#6b3a3a', grid: '#383c43', dot: '#555b65' },
+};
 
-function paintTemplate(ctx: CanvasRenderingContext2D, template: Template): void {
+function paintTemplate(ctx: CanvasRenderingContext2D, template: Template, { w, h }: PageSize, paper: Paper): void {
+  const c = PAPER_STYLES[paper];
   ctx.save();
   switch (template) {
     case 'ruled': {
-      ctx.strokeStyle = '#c9d6e8';
+      ctx.strokeStyle = c.rule;
       ctx.lineWidth = 1;
       ctx.beginPath();
-      for (let y = 112; y < PAGE_H - 40; y += 32) {
+      for (let y = 112; y < h - 40; y += 32) {
         ctx.moveTo(0, y + 0.5);
-        ctx.lineTo(PAGE_W, y + 0.5);
+        ctx.lineTo(w, y + 0.5);
       }
       ctx.stroke();
-      ctx.strokeStyle = '#f0b4b4';
+      ctx.strokeStyle = c.margin;
       ctx.beginPath();
       ctx.moveTo(96.5, 0);
-      ctx.lineTo(96.5, PAGE_H);
+      ctx.lineTo(96.5, h);
       ctx.stroke();
       break;
     }
     case 'grid': {
-      ctx.strokeStyle = '#dde3ec';
+      ctx.strokeStyle = c.grid;
       ctx.lineWidth = 1;
       ctx.beginPath();
-      for (let x = 28; x < PAGE_W; x += 28) {
+      for (let x = 28; x < w; x += 28) {
         ctx.moveTo(x + 0.5, 0);
-        ctx.lineTo(x + 0.5, PAGE_H);
+        ctx.lineTo(x + 0.5, h);
       }
-      for (let y = 28; y < PAGE_H; y += 28) {
+      for (let y = 28; y < h; y += 28) {
         ctx.moveTo(0, y + 0.5);
-        ctx.lineTo(PAGE_W, y + 0.5);
+        ctx.lineTo(w, y + 0.5);
       }
       ctx.stroke();
       break;
     }
     case 'dotted': {
-      ctx.fillStyle = '#b9c2cf';
-      for (let x = 28; x < PAGE_W; x += 28) for (let y = 28; y < PAGE_H; y += 28) ctx.fillRect(x - 1, y - 1, 2, 2);
+      ctx.fillStyle = c.dot;
+      for (let x = 28; x < w; x += 28) for (let y = 28; y < h; y += 28) ctx.fillRect(x - 1, y - 1, 2, 2);
       break;
     }
     case 'blank':
@@ -91,21 +97,22 @@ export interface PaintOptions {
  * template, images and text boxes, highlighter, pen, sticky notes.
  */
 export function paintPage(canvas: HTMLCanvasElement | OffscreenCanvas, page: Page, scale: number, dpr: number, opts: PaintOptions = {}): void {
-  const w = Math.round(PAGE_W * scale * dpr);
-  const h = Math.round(PAGE_H * scale * dpr);
+  const size = pageSize(page);
+  const w = Math.round(size.w * scale * dpr);
+  const h = Math.round(size.h * scale * dpr);
   if (canvas.width !== w) canvas.width = w;
   if (canvas.height !== h) canvas.height = h;
   const ctx = canvas.getContext('2d') as CanvasRenderingContext2D | null;
   if (!ctx) return;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = PAPER;
+  ctx.fillStyle = PAPER_STYLES[pagePaper(page)].fill;
   ctx.fillRect(0, 0, w, h);
-  ctx.setTransform(w / PAGE_W, 0, 0, h / PAGE_H, 0, 0);
+  ctx.setTransform(w / size.w, 0, 0, h / size.h, 0, 0);
   paintContent(ctx, page, opts);
 }
 
 function paintContent(ctx: CanvasRenderingContext2D, page: Page, opts: PaintOptions): void {
-  paintTemplate(ctx, page.template);
+  paintTemplate(ctx, page.template, pageSize(page), pagePaper(page));
   paintItems(ctx, page.items, 'under', opts.items);
   paintStrokes(ctx, page.strokes, opts.hidden, opts.replace, opts.fade);
   paintItems(ctx, page.items, 'over', opts.items);
@@ -132,7 +139,7 @@ export function paintRegion(
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = PAPER;
+  ctx.fillStyle = PAPER_STYLES[pagePaper(page)].fill;
   ctx.fillRect(0, 0, w, h);
   const k = w / rect.w;
   ctx.setTransform(k, 0, 0, k, -rect.x * k, -rect.y * k);
@@ -161,7 +168,7 @@ export function renderContentThumbnail(
 
 export function renderThumbnail(page: Page, images?: ImageResolver, width = 240): string {
   const canvas = document.createElement('canvas');
-  paintPage(canvas, page, width / PAGE_W, 1, { items: { images } });
+  paintPage(canvas, page, width / pageSize(page).w, 1, { items: { images } });
   return canvas.toDataURL('image/png');
 }
 
