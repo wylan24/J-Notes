@@ -4,7 +4,8 @@ import { newId } from '../core/ids';
 import { DocumentStore } from '../core/store';
 import { deleteSelectionOps } from '../core/selection';
 import { appendPage, getBlobs, getMeta, listElements, loadDocument, putBlob, saveElement, updateMeta } from '../storage/db';
-import { bookmarkedIndices, changeTemplateOp, clonePage, duplicatePageOp, insertPageOp, isBookmarked, pageBlobIds, toggleBookmarkOp } from '../core/pages';
+import { bookmarkedIndices, changeTemplateOp, clonePage, duplicatePageOp, insertPageOp, insertPagesOps, isBookmarked, pageBlobIds, toggleBookmarkOp } from '../core/pages';
+import { pagesFromFiles } from '../io/importPages';
 import { movePageOp } from '../core/ops';
 import { ChangeTemplateDialog, NotebookPickerDialog, PageMenuItems, type PageActionHandlers } from './PageActions';
 import { PageSidebar } from './PageSidebar';
@@ -572,12 +573,31 @@ function EditorInner({
   };
   const deletePage = () => deletePageAt(currentPage);
 
+  // Insert PDF pages or images after a page. The input is shared; the target page is remembered by id.
+  const pagesInput = useRef<HTMLInputElement>(null);
+  const insertAfter = useRef<string | null>(null);
+  const insertFiles = async (files: File[]) => {
+    const { pages, blobs, skipped } = await pagesFromFiles(files);
+    if (skipped.length) alert(`Could not insert: ${skipped.join(', ')}`);
+    if (!pages.length) return;
+    for (const b of blobs) await putBlob({ docId: store.doc.id, ...b });
+    const after = store.doc.pages.findIndex((p) => p.id === insertAfter.current);
+    const index = after < 0 ? store.doc.pages.length : after + 1;
+    store.dispatch(insertPagesOps(store.doc, index, pages)); // one undo step for all of them
+    scrollToPage(index);
+    setNotice(`Added ${pages.length} ${pages.length === 1 ? 'page' : 'pages'}`);
+  };
+
   /** The actions for page `index`, shared by the toolbar's page menu and the sidebar. */
   const pageActions = (index: number): PageActionHandlers => {
     const pageId = store.doc.pages[index]?.id ?? '';
     return {
       insert: (where) => addPageOp(insertPageOp(store.doc, index, where)),
       duplicate: () => addPageOp(duplicatePageOp(store.doc, index)),
+      insertFiles: () => {
+        insertAfter.current = pageId;
+        pagesInput.current?.click();
+      },
       // A PDF page keeps its PDF; it has no template to change.
       changeTemplate: store.doc.pages[index]?.background?.kind === 'pdf' ? undefined : () => setPageDialog({ kind: 'template', pageId }),
       move: store.doc.pages.length > 1 ? () => setPageDialog({ kind: 'move', pageId }) : undefined,
@@ -759,6 +779,18 @@ function EditorInner({
           <button className="icon-btn" aria-label="Customise toolbar" title="Customise toolbar" onClick={() => setCustomising(true)}>
             <Icon name="sliders" />
           </button>
+          <input
+            ref={pagesInput}
+            type="file"
+            accept=".pdf,application/pdf,image/*"
+            multiple
+            hidden
+            onChange={(e) => {
+              const files = [...(e.target.files ?? [])];
+              e.target.value = '';
+              if (files.length) void insertFiles(files).catch((err: Error) => alert(`Could not insert: ${err.message}`));
+            }}
+          />
           <input
             ref={photoInput}
             type="file"

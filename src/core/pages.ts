@@ -1,7 +1,7 @@
 // Page actions: duplicate, insert, change template, and copy between notebooks.
 // Each builds ops (or a page) from current state; the editor dispatches them as one undo step.
 import { newId } from './ids';
-import { blankPage, pagePaper, pageSize, type NotebookDoc, type Page, type PageBackground, type Template } from './model';
+import { blankPage, DEFAULT_PAGE_SIZE, pagePaper, pageSize, type NotebookDoc, type Page, type PageBackground, type PageSize, type Template } from './model';
 import { updateDocOp, updatePageOp, type DocOp } from './ops';
 
 /** Ids of the blobs (photos, custom template image) a page refers to. */
@@ -108,4 +108,28 @@ export function bookmarkedIndices(doc: NotebookDoc): number[] {
   if (!doc.bookmarks?.length) return [];
   const marked = new Set(doc.bookmarks);
   return doc.pages.flatMap((p, i) => (marked.has(p.id) ? [i] : []));
+}
+
+// --- Pages from PDFs and images -----------------------------------------------------------
+
+/** One page per PDF page, each the size of its PDF page, with that page as its background. */
+export function pdfPages(blobId: string, sizes: readonly PageSize[]): Page[] {
+  return sizes.map((size, pageIndex) => ({ id: newId(), template: 'blank', size: { ...size }, background: { kind: 'pdf', blobId, pageIndex }, strokes: [], items: [] }));
+}
+
+/** A page for an image: the default page width, and as tall as the image's proportions need. */
+export function imagePageSize(naturalW: number, naturalH: number, width = DEFAULT_PAGE_SIZE.w): PageSize {
+  const h = Math.max(1, Math.round((width * naturalH) / Math.max(1, naturalW)));
+  return { w: width, h };
+}
+
+/** A page showing an image across the whole page, as its background. */
+export function imagePage(blobId: string, naturalW: number, naturalH: number): Page {
+  return { id: newId(), template: 'blank', size: imagePageSize(naturalW, naturalH), background: { kind: 'image', blobId }, strokes: [], items: [] };
+}
+
+/** Ops adding `pages`, in order, starting at `index`. Dispatched together they are one undo step. */
+export function insertPagesOps(doc: NotebookDoc, index: number, pages: readonly Page[]): DocOp[] {
+  const at = Math.max(0, Math.min(index, doc.pages.length));
+  return pages.map((page, i) => ({ type: 'page.added', index: at + i, page }));
 }

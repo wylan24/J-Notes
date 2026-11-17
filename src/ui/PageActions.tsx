@@ -112,6 +112,8 @@ export function NotebookPickerDialog({
 export interface PageActionHandlers {
   insert: (where: 'before' | 'after') => void;
   duplicate: () => void;
+  /** Pick PDFs or images and add their pages after this one. */
+  insertFiles: () => void;
   changeTemplate?: () => void;
   move?: () => void;
   copy: () => void;
@@ -125,6 +127,7 @@ export function PageMenuItems({ actions, showRemove = false }: { actions: PageAc
       <button onClick={() => actions.insert('before')}>Insert page before</button>
       <button onClick={() => actions.insert('after')}>Insert page after</button>
       <button onClick={actions.duplicate}>Duplicate page</button>
+      <button onClick={actions.insertFiles}>Insert PDF or images…</button>
       <button onClick={actions.changeTemplate} disabled={!actions.changeTemplate}>
         Change template…
       </button>

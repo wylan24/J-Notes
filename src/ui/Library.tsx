@@ -5,8 +5,10 @@ import { TemplateGrid, type CustomTemplate } from './TemplateGrid';
 import { newId } from '../core/ids';
 import { createNotebook, deleteNotebook, listNotebooks, updateMeta } from '../storage/db';
 import { fromFile } from '../io/notebookFile';
+import { pagesFromFiles, titleFromFileName } from '../io/importPages';
 import { Icon } from './icons';
 
+const isNotebookFile = (f: File) => /\.json$/i.test(f.name) || f.type === 'application/json';
 const COVERS = ['#3d5a80', '#c8553d', '#2a9d8f', '#e9c46a', '#6d597a', '#264653'];
 const SIZES: { id: PageSizePreset; label: string }[] = [
   { id: 'a4', label: 'A4' },
@@ -60,13 +62,38 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
     refresh();
   };
 
-  const importFile = async (file: File) => {
+  const [importing, setImporting] = useState(false);
+
+  /**
+   * Import chosen files: each .jnotes.json becomes the notebook it was exported from; PDFs and images
+   * together become one new notebook (a page per PDF page and per image), which then opens.
+   */
+  const importFiles = async (files: File[]) => {
+    setImporting(true);
     try {
-      const { meta, doc, blobs } = fromFile(JSON.parse(await file.text()));
-      await createNotebook(meta, doc, blobs);
-      refresh();
-    } catch (e) {
-      alert(`Could not import: ${(e as Error).message}`);
+      for (const file of files.filter(isNotebookFile)) {
+        try {
+          const { meta, doc, blobs } = fromFile(JSON.parse(await file.text()));
+          await createNotebook(meta, doc, blobs);
+        } catch (e) {
+          alert(`Could not import ${file.name}: ${(e as Error).message}`);
+        }
+      }
+      const rest = files.filter((f) => !isNotebookFile(f));
+      if (!rest.length) return refresh();
+      const { pages, blobs, skipped } = await pagesFromFiles(rest);
+      if (skipped.length) alert(`Could not import: ${skipped.join(', ')}`);
+      if (!pages.length) return refresh();
+      const id = newId();
+      const now = Date.now();
+      await createNotebook(
+        { id, title: titleFromFileName(rest[0].name), cover: COVERS[0], template: 'blank', createdAt: now, updatedAt: now, favourite: false, trashedAt: null, pageCount: pages.length },
+        { id, pages },
+        blobs.map((b) => ({ docId: id, ...b })),
+      );
+      onOpen(id);
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -85,10 +112,21 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
         </div>
         <div className="lib-actions">
           <input className="search" placeholder="Search titles" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search notebooks" />
-          <button className="btn ghost" onClick={() => fileInput.current?.click()}>
-            Import
+          <button className="btn ghost" onClick={() => fileInput.current?.click()} disabled={importing} title="Import a J Notes notebook, a PDF, or images">
+            {importing ? 'Importing…' : 'Import'}
           </button>
-          <input ref={fileInput} type="file" accept=".json,application/json" hidden onChange={(e) => e.target.files?.[0] && void importFile(e.target.files[0])} />
+          <input
+            ref={fileInput}
+            type="file"
+            accept=".json,application/json,.pdf,application/pdf,image/*"
+            multiple
+            hidden
+            onChange={(e) => {
+              const files = [...(e.target.files ?? [])];
+              e.target.value = '';
+              if (files.length) void importFiles(files);
+            }}
+          />
           <button className="btn primary" onClick={() => setCreating(true)}>
             <Icon name="plus" /> New notebook
           </button>
