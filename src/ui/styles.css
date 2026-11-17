@@ -439,3 +439,21 @@ button:disabled { cursor: default; opacity: 0.35; }
 .thumb-jump { display: flex; flex: 1; min-height: 0; padding: 0; border: 0; background: none; cursor: pointer; }
 .thumb-ribbon { position: absolute; top: -1px; right: 8px; width: 10px; height: 16px; background: var(--accent); clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 72%, 0 100%); pointer-events: none; }
 .sidebar-empty { margin: 16px 12px; font-size: 12px; color: var(--muted); line-height: 1.4; }
+
+/* ---------- PDF text search ---------- */
+.search-panel {
+  position: absolute; top: 12px; right: 12px; z-index: 15; width: min(340px, calc(100% - 24px)); max-height: calc(100% - 24px);
+  display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow);
+}
+.search-row { display: flex; align-items: center; gap: 6px; padding: 8px 8px 8px 12px; border-bottom: 1px solid var(--border); color: var(--muted); }
+.search-row svg { width: 18px; height: 18px; flex: none; }
+.search-row input { flex: 1; min-width: 0; border: 0; background: none; color: var(--text); font: inherit; outline: none; padding: 4px 0; }
+.search-status { margin: 0; padding: 8px 14px 4px; font-size: 12px; color: var(--muted); min-height: 1em; }
+.search-status:empty { display: none; }
+.search-results { list-style: none; margin: 0; padding: 0 6px 8px; overflow-y: auto; }
+.search-page { padding: 10px 8px 4px; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.search-results button { width: 100%; text-align: left; border: 0; background: none; color: var(--text); font: inherit; font-size: 13px; line-height: 1.4; padding: 6px 8px; border-radius: 8px; }
+.search-results button:hover { background: var(--surface-2); }
+.search-results button.active { background: var(--accent-soft); }
+.search-results mark { background: #ffe066; color: inherit; border-radius: 2px; padding: 0 1px; }
+.search-hit { position: absolute; pointer-events: none; background: rgba(255, 214, 0, 0.35); outline: 2px solid rgba(240, 180, 0, 0.9); border-radius: 3px; mix-blend-mode: multiply; }

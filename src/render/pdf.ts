@@ -4,6 +4,7 @@
 // through `onImagesLoaded` when a sharper one is ready, exactly like photos.
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { pdfPageSize, PT_TO_UNITS, rasterScale, sharpEnough } from '../core/pdf';
+import type { TextRun } from '../core/pdfSearch';
 import type { PageSize, PdfBackground } from '../core/model';
 import { getBlob } from '../storage/db';
 import { emitImagesLoaded } from './items';
@@ -197,3 +198,38 @@ export const pdfResolver =
   (docId: string): PdfResolver =>
   (bg, size, wanted) =>
     pdfRaster(docId, bg, size, wanted);
+
+// --- Text ------------------------------------------------------------------------------------
+
+const texts = new Map<string, Promise<TextRun[]>>();
+
+/**
+ * The text of a PDF page as runs with boxes in page units (top-left origin), for search.
+ * Cached for the session: a page's text never changes.
+ */
+export function pdfText(docId: string, bg: PdfBackground): Promise<TextRun[]> {
+  const key = keyOf(docId, bg);
+  let t = texts.get(key);
+  if (!t) {
+    t = (async () => {
+      const [m, pdf] = await Promise.all([pdfjs(), openDocument(docId, bg.blobId)]);
+      const page = await pdf.getPage(bg.pageIndex + 1);
+      const viewport = page.getViewport({ scale: PT_TO_UNITS });
+      const content = await page.getTextContent();
+      const runs: TextRun[] = [];
+      for (const item of content.items) {
+        if (!('str' in item)) continue;
+        // Map the run's text matrix into page units; (e, f) is its baseline origin.
+        const [a, b, c, d, e, f] = m.Util.transform(viewport.transform, item.transform);
+        const h = Math.hypot(c, d) || Math.hypot(a, b);
+        const w = item.width * PT_TO_UNITS;
+        runs.push({ str: item.str, x: e, y: f - h * 0.85, w, h, eol: item.hasEOL });
+      }
+      page.cleanup();
+      return runs;
+    })();
+    t.catch(() => texts.delete(key));
+    texts.set(key, t);
+  }
+  return t;
+}

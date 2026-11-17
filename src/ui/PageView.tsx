@@ -87,6 +87,8 @@ interface Props {
   /** The zoom window's target box, shown on its page. */
   zoomTarget?: ZoomTarget | null;
   setZoomTarget?: (t: ZoomTarget) => void;
+  /** Boxes to highlight (a search result on this page), in page units. */
+  highlights?: readonly { x: number; y: number; w: number; h: number }[];
 }
 
 type EditableItem = TextItem | StickyItem;
@@ -211,7 +213,7 @@ function paintLaser(ctx: CanvasRenderingContext2D, trail: LaserPoint[], now: num
   ctx.restore();
 }
 
-export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, playback, onSeekInk }: Props) {
+export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, playback, onSeekInk, highlights }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const baseRef = useRef<HTMLCanvasElement>(null);
   const liveRef = useRef<HTMLCanvasElement>(null);
@@ -1043,6 +1045,9 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
           )}
         </>
       )}
+      {highlights?.map((r, i) => (
+        <div key={i} className="search-hit" style={{ left: r.x * scale - 2, top: r.y * scale - 2, width: r.w * scale + 4, height: r.h * scale + 4 }} />
+      ))}
       {showTarget && (
         // The box lets ink through; only its grip tab moves it.
         <div className="zoom-target" style={{ left: showTarget.x * scale, top: showTarget.y * scale, width: showTarget.w * scale, height: showTarget.h * scale }}>

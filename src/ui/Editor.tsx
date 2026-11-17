@@ -9,6 +9,7 @@ import { pagesFromFiles } from '../io/importPages';
 import { movePageOp } from '../core/ops';
 import { ChangeTemplateDialog, NotebookPickerDialog, PageMenuItems, type PageActionHandlers } from './PageActions';
 import { PageSidebar } from './PageSidebar';
+import { SearchPanel, type SearchHit } from './SearchPanel';
 import type { CustomTemplate } from './TemplateGrid';
 import { Persister, type SaveStatus } from '../storage/persister';
 import { downloadBlob, exportPagePng, renderContentThumbnail, renderThumbnail } from '../render/page';
@@ -612,6 +613,24 @@ function EditorInner({
   };
   const currentBookmarked = !!doc.pages[currentPage] && isBookmarked(doc, doc.pages[currentPage].id);
 
+  // --- PDF text search -------------------------------------------------------------------------
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchHit, setSearchHit] = useState<SearchHit | null>(null);
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setSearchHit(null);
+  };
+  /** Scroll so the match sits a third of the way down the view, and highlight it. */
+  const showSearchHit = (hit: SearchHit) => {
+    setSearchHit(hit);
+    const index = store.doc.pages.findIndex((p) => p.id === hit.pageId);
+    const el = scrollerRef.current;
+    if (index < 0 || !el) return;
+    const y = hit.rects.length ? Math.min(...hit.rects.map((r) => r.y)) : 0;
+    const top = (pageTops(store.doc.pages, zoom, PAGE_GAP).tops[index] ?? 0) + y * zoom - el.clientHeight / 3;
+    el.scrollTo({ top: Math.max(0, top), behavior: 'auto' });
+  };
+
   const movePage = (pageId: string, to: number) => {
     const op = movePageOp(store.doc, pageId, to);
     if (op) store.dispatch([op]);
@@ -718,6 +737,9 @@ function EditorInner({
       } else if (mod && (e.key === '=' || e.key === '+')) {
         e.preventDefault();
         setZoomAt(zoomRef.current * 1.2);
+      } else if (mod && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setSearchOpen(true);
       } else if (mod && e.key === '-') {
         e.preventDefault();
         setZoomAt(zoomRef.current / 1.2);
@@ -832,6 +854,15 @@ function EditorInner({
             title="Page thumbnails"
           >
             <Icon name="sidebar" />
+          </button>
+          <button
+            className={`icon-btn ${searchOpen ? 'active' : ''}`}
+            onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
+            aria-pressed={searchOpen}
+            aria-label="Search PDF text"
+            title="Search (⌘F)"
+          >
+            <Icon name="search" />
           </button>
           <button
             className={`icon-btn ${currentBookmarked ? 'active' : ''}`}
@@ -1062,6 +1093,7 @@ function EditorInner({
               onSeekInk={audioOpen && recState === 'idle' && recordings.length ? seekInk : undefined}
               zoomTarget={zoomTarget}
               setZoomTarget={setZoomTarget}
+              highlights={searchHit?.pageId === page.id ? searchHit.rects : undefined}
             />
           ))}
         </div>
@@ -1076,6 +1108,7 @@ function EditorInner({
       {(pageDialog?.kind === 'move' || pageDialog?.kind === 'copy') && (
         <NotebookPickerDialog currentId={doc.id} mode={pageDialog.kind} onCancel={() => setPageDialog(null)} onPick={(n) => sendPage(pageDialog.pageId, n, pageDialog.kind as 'move' | 'copy')} />
       )}
+      {searchOpen && <SearchPanel doc={doc} onJump={showSearchHit} onClose={closeSearch} />}
       {ruler && <RulerOverlay ruler={ruler} setRuler={setRuler} zoom={zoom} onClose={() => setRuler(null)} />}
       </div>
       </div>
