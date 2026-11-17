@@ -3,6 +3,7 @@ import { pageSize, type Page } from '../core/model';
 import { dropTarget, stackLayout, visibleRange } from '../core/pages';
 import { paintPage } from '../render/page';
 import { imageResolver, onImagesLoaded } from '../render/items';
+import { pdfResolver } from '../render/pdf';
 import { Icon } from './icons';
 import { PageMenuItems, type PageActionHandlers } from './PageActions';
 
@@ -34,7 +35,7 @@ function thumbnail(page: Page, docId: string, dpr: number): HTMLCanvasElement {
     return hit;
   }
   const c = document.createElement('canvas');
-  paintPage(c, page, THUMB_W / pageSize(page).w, dpr, { items: { images: imageResolver(docId) } });
+  paintPage(c, page, THUMB_W / pageSize(page).w, dpr, { items: { images: imageResolver(docId) }, pdf: pdfResolver(docId) });
   cache.set(page, c);
   if (cache.size > MAX_CACHED) cache.delete(cache.keys().next().value!);
   return c;

@@ -39,7 +39,9 @@ export function duplicatePageOp(doc: NotebookDoc, index: number): DocOp | null {
 export function insertPageOp(doc: NotebookDoc, index: number, where: 'before' | 'after'): DocOp | null {
   const ref = doc.pages[index];
   if (!ref) return null;
-  const page = blankPage(newId(), { template: ref.template, size: pageSize(ref), paper: pagePaper(ref), background: ref.background });
+  // A PDF page's background is its content, not a template, so a new page next to it is blank.
+  const background = ref.background?.kind === 'image' ? ref.background : undefined;
+  const page = blankPage(newId(), { template: ref.template, size: pageSize(ref), paper: pagePaper(ref), background });
   return { type: 'page.added', index: where === 'before' ? index : index + 1, page };
 }
 

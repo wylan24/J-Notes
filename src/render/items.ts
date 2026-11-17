@@ -23,6 +23,11 @@ export function onImagesLoaded(fn: () => void): () => void {
   return () => listeners.delete(fn);
 }
 
+/** Tell painters that some image or PDF page they may be showing has become available. */
+export function emitImagesLoaded(): void {
+  listeners.forEach((l) => l());
+}
+
 export function decodeImage(blob: Blob): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -54,7 +59,7 @@ export function ensureImage(docId: string, blobId: string): Promise<void> {
     })
     .finally(() => {
       entry.loading = null;
-      listeners.forEach((l) => l());
+      emitImagesLoaded();
     });
   cache.set(k, entry);
   return entry.loading;

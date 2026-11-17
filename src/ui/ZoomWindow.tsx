@@ -4,6 +4,7 @@ import type { DocumentStore } from '../core/store';
 import { advance, back, newLine, panelToPage, resizeTarget, shouldAdvance, ZOOM_ASPECT, type ZoomTarget } from '../core/zoomWindow';
 import { paintRegion } from '../render/page';
 import { imageResolver, onImagesLoaded } from '../render/items';
+import { pdfResolver } from '../render/pdf';
 import { buildStrokePath, HIGHLIGHTER_ALPHA } from '../render/stroke';
 import { Icon } from './icons';
 import { newInkStroke, pressureOf, timeStamp } from './ink';
@@ -61,7 +62,7 @@ export function ZoomWindow({ store, page, target, setTarget, tool, penOnly, onCl
   const paint = () => {
     const c = baseRef.current;
     if (!c || !size.w) return;
-    paintRegion(c, page, target, size.w, size.h, dpr, { items: { images: imageResolver(store.doc.id) } });
+    paintRegion(c, page, target, size.w, size.h, dpr, { items: { images: imageResolver(store.doc.id) }, pdf: pdfResolver(store.doc.id) });
     // The committed stroke is now in the base layer.
     if (!active.current) {
       const l = liveRef.current;

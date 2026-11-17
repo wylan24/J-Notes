@@ -112,7 +112,7 @@ export function NotebookPickerDialog({
 export interface PageActionHandlers {
   insert: (where: 'before' | 'after') => void;
   duplicate: () => void;
-  changeTemplate: () => void;
+  changeTemplate?: () => void;
   move?: () => void;
   copy: () => void;
   remove?: () => void;
@@ -125,7 +125,9 @@ export function PageMenuItems({ actions, showRemove = false }: { actions: PageAc
       <button onClick={() => actions.insert('before')}>Insert page before</button>
       <button onClick={() => actions.insert('after')}>Insert page after</button>
       <button onClick={actions.duplicate}>Duplicate page</button>
-      <button onClick={actions.changeTemplate}>Change template…</button>
+      <button onClick={actions.changeTemplate} disabled={!actions.changeTemplate}>
+        Change template…
+      </button>
       <hr />
       <button onClick={actions.move} disabled={!actions.move}>
         Move to notebook…

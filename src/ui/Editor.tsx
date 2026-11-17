@@ -220,7 +220,7 @@ function EditorInner({
       // Refresh the library thumbnail at most every few seconds.
       if (Date.now() - lastThumb < 3000 || !store.doc.pages[0]) return;
       lastThumb = Date.now();
-      void updateMeta(store.doc.id, { thumbnail: renderThumbnail(store.doc.pages[0], imageResolver(store.doc.id)) });
+      void updateMeta(store.doc.id, { thumbnail: renderThumbnail(store.doc.pages[0], store.doc.id) });
     });
     const off = persister.onStatus(setStatus);
     const flush = () => void persister.flush();
@@ -231,7 +231,7 @@ function EditorInner({
       off();
       window.removeEventListener('pagehide', flush);
       document.removeEventListener('visibilitychange', onVis);
-      if (store.doc.pages[0]) void updateMeta(store.doc.id, { thumbnail: renderThumbnail(store.doc.pages[0], imageResolver(store.doc.id)) });
+      if (store.doc.pages[0]) void updateMeta(store.doc.id, { thumbnail: renderThumbnail(store.doc.pages[0], store.doc.id) });
       void persister.dispose();
     };
   }, [store, snapshotSeq]);
@@ -578,7 +578,8 @@ function EditorInner({
     return {
       insert: (where) => addPageOp(insertPageOp(store.doc, index, where)),
       duplicate: () => addPageOp(duplicatePageOp(store.doc, index)),
-      changeTemplate: () => setPageDialog({ kind: 'template', pageId }),
+      // A PDF page keeps its PDF; it has no template to change.
+      changeTemplate: store.doc.pages[index]?.background?.kind === 'pdf' ? undefined : () => setPageDialog({ kind: 'template', pageId }),
       move: store.doc.pages.length > 1 ? () => setPageDialog({ kind: 'move', pageId }) : undefined,
       copy: () => setPageDialog({ kind: 'copy', pageId }),
       remove: store.doc.pages.length > 1 ? () => deletePageAt(index) : undefined,

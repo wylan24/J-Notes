@@ -36,6 +36,7 @@ import { replaceStrokesOps, splitStroke } from '../core/erase';
 import type { DocumentStore } from '../core/store';
 import { paintPage, paintStrokes, PAPER_STYLES } from '../render/page';
 import { imageResolver, measurer, onImagesLoaded } from '../render/items';
+import { pdfResolver } from '../render/pdf';
 import { buildStrokePath } from '../render/stroke';
 
 export interface ToolState {
@@ -270,6 +271,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       hidden: hidden.current ?? undefined,
       replace: replaced.current ?? undefined,
       items: { images, hidden: hiddenItems.current ?? undefined, override: itemOverride.current ?? undefined },
+      pdf: pdfResolver(store.doc.id),
       fade: playbackRef.current ? (s) => playbackState(s, playbackRef.current!.rec, playbackRef.current!.t) === 'ahead' : undefined,
     });
     if (clearLiveOnNextBase.current) {

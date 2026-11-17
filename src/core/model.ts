@@ -119,7 +119,13 @@ export interface ImageBackground {
   kind: 'image';
   blobId: string;
 }
-export type PageBackground = ImageBackground;
+/** A page of a PDF stored in the notebook's blob store, drawn as the page's paper. `pageIndex` is 0-based. */
+export interface PdfBackground {
+  kind: 'pdf';
+  blobId: string;
+  pageIndex: number;
+}
+export type PageBackground = ImageBackground | PdfBackground;
 
 export interface Page {
   id: string;

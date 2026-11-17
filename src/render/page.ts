@@ -1,7 +1,8 @@
-import { pagePaper, pageSize, type Page, type PageBackground, type PageSize, type Paper, type Stroke, type Template } from '../core/model';
+import { pagePaper, pageSize, type Page, type PageBackground, type PageSize, type Paper, type PdfBackground, type Stroke, type Template } from '../core/model';
 import { templateLayout, type LineTone } from '../core/templates';
 import { paintStroke } from './stroke';
 import { ensureImage, imageResolver, paintItems, type ImageResolver, type ItemPaintOptions } from './items';
+import { ensurePdfRaster, pdfResolver } from './pdf';
 
 /** Paper and template-line colours for each paper colour. */
 export const PAPER_STYLES: Record<Paper, Record<LineTone | 'fill' | 'dot' | 'label', string>> = {
@@ -38,9 +39,28 @@ function paintTemplate(ctx: CanvasRenderingContext2D, template: Template, size: 
   ctx.restore();
 }
 
-/** A custom template image, scaled to fit inside the page and centred. Nothing is drawn until it has loaded. */
-function paintBackground(ctx: CanvasRenderingContext2D, bg: PageBackground, size: PageSize, images?: ImageResolver): void {
-  const img = images?.(bg.blobId) as (CanvasImageSource & { width: number; height: number }) | null | undefined;
+/** Draws a PDF page's render for a page of `size` at `wanted` device px per page unit, or null while none is ready. */
+export type PdfResolver = (bg: PdfBackground, size: PageSize, wanted: number) => CanvasImageSource | null;
+
+/**
+ * The page's background beneath the template: a custom template image, fitted inside the page and
+ * centred, or a PDF page, which fills it. Nothing is drawn until it is ready.
+ */
+function paintBackground(ctx: CanvasRenderingContext2D, bg: PageBackground, size: PageSize, opts: PaintOptions): void {
+  if (bg.kind === 'pdf') {
+    // The current transform's scale is the device px per page unit this paint is at.
+    const t = ctx.getTransform();
+    const raster = opts.pdf?.(bg, size, Math.hypot(t.a, t.b));
+    if (raster) {
+      // A render may be shrunk a lot (a thumbnail drawn from the page's render); smooth it properly.
+      ctx.save();
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(raster, 0, 0, size.w, size.h);
+      ctx.restore();
+    }
+    return;
+  }
+  const img = opts.items?.images?.(bg.blobId) as (CanvasImageSource & { width: number; height: number }) | null | undefined;
   if (!img || !img.width || !img.height) return;
   const k = Math.min(size.w / img.width, size.h / img.height);
   const w = img.width * k, h = img.height * k;
@@ -74,6 +94,8 @@ export function paintStrokes(
 }
 
 export interface PaintOptions {
+  /** Renders of PDF page backgrounds. Without it, PDF pages paint as plain paper. */
+  pdf?: PdfResolver;
   /** Stroke ids not to draw (e.g. being dragged on the live layer). */
   hidden?: ReadonlySet<string>;
   /** Strokes to draw in place of others (e.g. a partial erase in progress). */
@@ -104,7 +126,7 @@ export function paintPage(canvas: HTMLCanvasElement | OffscreenCanvas, page: Pag
 }
 
 function paintContent(ctx: CanvasRenderingContext2D, page: Page, opts: PaintOptions): void {
-  if (page.background) paintBackground(ctx, page.background, pageSize(page), opts.items?.images);
+  if (page.background) paintBackground(ctx, page.background, pageSize(page), opts);
   paintTemplate(ctx, page.template, pageSize(page), pagePaper(page));
   paintItems(ctx, page.items, 'under', opts.items);
   paintStrokes(ctx, page.strokes, opts.hidden, opts.replace, opts.fade);
@@ -159,19 +181,25 @@ export function renderContentThumbnail(
   return canvas.toDataURL('image/png');
 }
 
-export function renderThumbnail(page: Page, images?: ImageResolver, width = 240): string {
+/** A notebook's page as a PNG data URL, `width` CSS px wide, with its photos and PDF background as loaded so far. */
+export function renderThumbnail(page: Page, docId: string, width = 240): string {
   const canvas = document.createElement('canvas');
-  paintPage(canvas, page, width / pageSize(page).w, 1, { items: { images } });
+  paintPage(canvas, page, width / pageSize(page).w, 1, { items: { images: imageResolver(docId) }, pdf: pdfResolver(docId) });
   return canvas.toDataURL('image/png');
 }
 
-/** Export one page at 2× as a PNG. Its images are loaded first so none export as placeholders. */
+/** Export one page at 2× as a PNG. Its images and PDF background are loaded first so none export as placeholders. */
 export async function exportPagePng(page: Page, docId: string, filename: string): Promise<void> {
+  const scale = 2;
+  const bg = page.background;
   const blobIds = page.items.flatMap((it) => (it.kind === 'image' ? [it.blobId] : []));
-  if (page.background) blobIds.push(page.background.blobId);
-  await Promise.all(blobIds.map((id) => ensureImage(docId, id)));
+  if (bg?.kind === 'image') blobIds.push(bg.blobId);
+  await Promise.all([
+    ...blobIds.map((id) => ensureImage(docId, id)),
+    ...(bg?.kind === 'pdf' ? [ensurePdfRaster(docId, bg, pageSize(page), scale)] : []),
+  ]);
   const canvas = document.createElement('canvas');
-  paintPage(canvas, page, 2, 1, { items: { images: imageResolver(docId) } });
+  paintPage(canvas, page, scale, 1, { items: { images: imageResolver(docId) }, pdf: pdfResolver(docId) });
   const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/png'));
   if (blob) downloadBlob(blob, filename);
 }
