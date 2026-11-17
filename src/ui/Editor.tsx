@@ -509,9 +509,9 @@ function EditorInner({
 
   const addPage = () => {
     const index = Math.min(currentPage + 1, doc.pages.length);
-    // A new page takes the size and paper of the page it follows.
+    // A new page takes the size, paper and custom template image of the page it follows.
     const prev = doc.pages[currentPage] ?? {};
-    const page = blankPage(newId(), { template: meta.template, size: pageSize(prev), paper: pagePaper(prev) });
+    const page = blankPage(newId(), { template: meta.template, size: pageSize(prev), paper: pagePaper(prev), background: prev.background });
     store.dispatch([{ type: 'page.added', index, page }]);
     requestAnimationFrame(() => {
       const el = scrollerRef.current;

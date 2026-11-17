@@ -37,7 +37,7 @@ export type InkTool = 'pen' | 'highlighter';
 export type ToolKind = InkTool | 'shapes' | 'text' | 'sticky' | 'eraser' | 'lasso' | 'laser';
 export type PenStyle = 'fountain' | 'ball' | 'brush';
 export type EraseMode = 'stroke' | 'partial';
-export type Template = 'blank' | 'ruled' | 'grid' | 'dotted';
+export type Template = 'blank' | 'ruled' | 'grid' | 'dotted' | 'legal' | 'cornell' | 'music' | 'planner';
 
 /** One sampled input point in page coordinates. `p` is pressure in 0..1. */
 export interface InputPoint {
@@ -111,9 +111,18 @@ export type PageItem = TextItem | ImageItem | StickyItem;
 /** Fields an `items.updated` op can change. */
 export type ItemPatch = Partial<Omit<TextItem, 'id' | 'kind'> & Omit<ImageItem, 'id' | 'kind'> & Omit<StickyItem, 'id' | 'kind'>>;
 
+/** A custom template: an image in the notebook's blob store, fitted to the page under the template lines. */
+export interface ImageBackground {
+  kind: 'image';
+  blobId: string;
+}
+export type PageBackground = ImageBackground;
+
 export interface Page {
   id: string;
   template: Template;
+  /** Custom template image, drawn on the paper beneath the template lines. */
+  background?: PageBackground;
   /** Absent on pages saved before sizes existed (= A4 portrait); read it with `pageSize`. */
   size?: PageSize;
   /** Absent on pages saved before paper colours existed (= white); read it with `pagePaper`. */
@@ -136,11 +145,13 @@ export interface PageSetup {
   template: Template;
   size: PageSize;
   paper: Paper;
+  background?: PageBackground;
 }
 
 /** An empty page. Size and paper are only stored when they differ from the defaults. */
-export function blankPage(id: string, { template, size, paper }: PageSetup): Page {
+export function blankPage(id: string, { template, size, paper, background }: PageSetup): Page {
   const page: Page = { id, template, strokes: [], items: [] };
+  if (background) page.background = { ...background };
   if (size.w !== DEFAULT_PAGE_SIZE.w || size.h !== DEFAULT_PAGE_SIZE.h) page.size = { w: size.w, h: size.h };
   if (paper !== DEFAULT_PAPER) page.paper = paper;
   return page;

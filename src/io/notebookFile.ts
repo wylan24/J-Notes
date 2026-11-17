@@ -21,7 +21,10 @@ export interface NotebookFile {
 /** Blob ids referred to by items anywhere in the notebook. */
 export function referencedBlobIds(doc: NotebookDoc): string[] {
   const ids = new Set<string>();
-  for (const page of doc.pages) for (const it of page.items ?? []) if (it.kind === 'image') ids.add(it.blobId);
+  for (const page of doc.pages) {
+    for (const it of page.items ?? []) if (it.kind === 'image') ids.add(it.blobId);
+    if (page.background) ids.add(page.background.blobId);
+  }
   for (const r of doc.recordings ?? []) ids.add(r.blobId);
   return [...ids];
 }

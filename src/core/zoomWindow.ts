@@ -1,6 +1,7 @@
 // The zoom window: a magnified panel showing a target box on a page. Writing in the panel lands
 // in the box, and the box moves along the line as you write, like a typewriter carriage.
 import { DEFAULT_PAGE_SIZE, type PageSize, type Template } from './model';
+import { linePitch, writingLeft } from './templates';
 import type { Vec } from './geometry';
 
 /** Panel width ÷ height; the target box has the same shape. */
@@ -20,9 +21,9 @@ export interface ZoomTarget {
   h: number;
 }
 
-/** Where a new line starts: just right of the margin rule on ruled paper. */
-export function leftMargin(template: Template): number {
-  return template === 'ruled' ? 104 : 32;
+/** Where a new line starts: just right of the margin on paper that has one. */
+export function leftMargin(template: Template, size: PageSize = DEFAULT_PAGE_SIZE): number {
+  return writingLeft(template, size);
 }
 
 // Every function that moves or sizes the box takes the size of the page it is on, so the box stays on it.
@@ -34,7 +35,8 @@ export function clampTarget(t: ZoomTarget, size: PageSize = DEFAULT_PAGE_SIZE): 
 }
 
 export function defaultTarget(pageId: string, template: Template, w = 280, size: PageSize = DEFAULT_PAGE_SIZE): ZoomTarget {
-  return clampTarget({ pageId, x: leftMargin(template), y: template === 'ruled' ? 104 : 80, w, h: w / ZOOM_ASPECT }, size);
+  const lined = linePitch(template) !== null && template !== 'grid';
+  return clampTarget({ pageId, x: leftMargin(template, size), y: lined ? 104 : 80, w, h: w / ZOOM_ASPECT }, size);
 }
 
 /** Resize about the box's left-middle, so the current line stays put. */
@@ -52,14 +54,11 @@ export function shouldAdvance(maxPanelX: number, panelW: number): boolean {
   return maxPanelX > panelW * ADVANCE_AT;
 }
 
-/** Line spacing of the paper, in page units (matches the template painter); null for unlined paper. */
-const PITCH: Partial<Record<Template, number>> = { ruled: 32, grid: 28 };
-
 /** Down one box height, rounded to whole lines on ruled and grid paper so the box stays on the lines. */
 export function newLine(t: ZoomTarget, template: Template, size: PageSize = DEFAULT_PAGE_SIZE): ZoomTarget {
-  const pitch = PITCH[template];
+  const pitch = linePitch(template);
   const step = pitch ? Math.max(pitch, Math.round(t.h / pitch) * pitch) : t.h;
-  return clampTarget({ ...t, x: leftMargin(template), y: t.y + step }, size);
+  return clampTarget({ ...t, x: leftMargin(template, size), y: t.y + step }, size);
 }
 
 /** Move along the line; past the right edge of the page, wrap to the next line. */

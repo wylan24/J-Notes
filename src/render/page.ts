@@ -1,58 +1,50 @@
-import { pagePaper, pageSize, type Page, type PageSize, type Paper, type Stroke, type Template } from '../core/model';
+import { pagePaper, pageSize, type Page, type PageBackground, type PageSize, type Paper, type Stroke, type Template } from '../core/model';
+import { templateLayout, type LineTone } from '../core/templates';
 import { paintStroke } from './stroke';
 import { ensureImage, imageResolver, paintItems, type ImageResolver, type ItemPaintOptions } from './items';
 
 /** Paper and template-line colours for each paper colour. */
-export const PAPER_STYLES: Record<Paper, { fill: string; rule: string; margin: string; grid: string; dot: string }> = {
-  white: { fill: '#fffefb', rule: '#c9d6e8', margin: '#f0b4b4', grid: '#dde3ec', dot: '#b9c2cf' },
-  yellow: { fill: '#fdf5d3', rule: '#c4cfd9', margin: '#eaa79f', grid: '#e2dcc0', dot: '#bdb59a' },
-  dark: { fill: '#26282c', rule: '#3d4a5c', margin: '#6b3a3a', grid: '#383c43', dot: '#555b65' },
+export const PAPER_STYLES: Record<Paper, Record<LineTone | 'fill' | 'dot' | 'label', string>> = {
+  white: { fill: '#fffefb', rule: '#c9d6e8', margin: '#f0b4b4', grid: '#dde3ec', strong: '#9fb0c7', dot: '#b9c2cf', label: '#8a95a5' },
+  yellow: { fill: '#fdf5d3', rule: '#c4cfd9', margin: '#eaa79f', grid: '#e2dcc0', strong: '#a9a68f', dot: '#bdb59a', label: '#8f8770' },
+  dark: { fill: '#26282c', rule: '#3d4a5c', margin: '#6b3a3a', grid: '#383c43', strong: '#56637a', dot: '#555b65', label: '#8a919c' },
 };
 
-function paintTemplate(ctx: CanvasRenderingContext2D, template: Template, { w, h }: PageSize, paper: Paper): void {
+const TONES: LineTone[] = ['grid', 'rule', 'strong', 'margin'];
+
+function paintTemplate(ctx: CanvasRenderingContext2D, template: Template, size: PageSize, paper: Paper): void {
   const c = PAPER_STYLES[paper];
+  const { lines, dots, labels } = templateLayout(template, size);
   ctx.save();
-  switch (template) {
-    case 'ruled': {
-      ctx.strokeStyle = c.rule;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      for (let y = 112; y < h - 40; y += 32) {
-        ctx.moveTo(0, y + 0.5);
-        ctx.lineTo(w, y + 0.5);
-      }
-      ctx.stroke();
-      ctx.strokeStyle = c.margin;
-      ctx.beginPath();
-      ctx.moveTo(96.5, 0);
-      ctx.lineTo(96.5, h);
-      ctx.stroke();
-      break;
+  ctx.lineWidth = 1;
+  // One path per tone, lightest first; the half-unit offset keeps 1-unit lines crisp at 1×.
+  for (const tone of TONES) {
+    ctx.strokeStyle = c[tone];
+    ctx.beginPath();
+    for (const l of lines) {
+      if (l.tone !== tone) continue;
+      ctx.moveTo(l.x1 + (l.x1 === l.x2 ? 0.5 : 0), l.y1 + (l.y1 === l.y2 ? 0.5 : 0));
+      ctx.lineTo(l.x2 + (l.x1 === l.x2 ? 0.5 : 0), l.y2 + (l.y1 === l.y2 ? 0.5 : 0));
     }
-    case 'grid': {
-      ctx.strokeStyle = c.grid;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      for (let x = 28; x < w; x += 28) {
-        ctx.moveTo(x + 0.5, 0);
-        ctx.lineTo(x + 0.5, h);
-      }
-      for (let y = 28; y < h; y += 28) {
-        ctx.moveTo(0, y + 0.5);
-        ctx.lineTo(w, y + 0.5);
-      }
-      ctx.stroke();
-      break;
-    }
-    case 'dotted': {
-      ctx.fillStyle = c.dot;
-      for (let x = 28; x < w; x += 28) for (let y = 28; y < h; y += 28) ctx.fillRect(x - 1, y - 1, 2, 2);
-      break;
-    }
-    case 'blank':
-      break;
+    ctx.stroke();
+  }
+  ctx.fillStyle = c.dot;
+  for (const d of dots) ctx.fillRect(d.x - 1, d.y - 1, 2, 2);
+  if (labels.length) {
+    ctx.fillStyle = c.label;
+    ctx.font = '600 12px system-ui, -apple-system, sans-serif';
+    for (const l of labels) ctx.fillText(l.text, l.x, l.y);
   }
   ctx.restore();
+}
+
+/** A custom template image, scaled to fit inside the page and centred. Nothing is drawn until it has loaded. */
+function paintBackground(ctx: CanvasRenderingContext2D, bg: PageBackground, size: PageSize, images?: ImageResolver): void {
+  const img = images?.(bg.blobId) as (CanvasImageSource & { width: number; height: number }) | null | undefined;
+  if (!img || !img.width || !img.height) return;
+  const k = Math.min(size.w / img.width, size.h / img.height);
+  const w = img.width * k, h = img.height * k;
+  ctx.drawImage(img, (size.w - w) / 2, (size.h - h) / 2, w, h);
 }
 
 /**
@@ -112,6 +104,7 @@ export function paintPage(canvas: HTMLCanvasElement | OffscreenCanvas, page: Pag
 }
 
 function paintContent(ctx: CanvasRenderingContext2D, page: Page, opts: PaintOptions): void {
+  if (page.background) paintBackground(ctx, page.background, pageSize(page), opts.items?.images);
   paintTemplate(ctx, page.template, pageSize(page), pagePaper(page));
   paintItems(ctx, page.items, 'under', opts.items);
   paintStrokes(ctx, page.strokes, opts.hidden, opts.replace, opts.fade);
@@ -174,7 +167,9 @@ export function renderThumbnail(page: Page, images?: ImageResolver, width = 240)
 
 /** Export one page at 2× as a PNG. Its images are loaded first so none export as placeholders. */
 export async function exportPagePng(page: Page, docId: string, filename: string): Promise<void> {
-  await Promise.all(page.items.flatMap((it) => (it.kind === 'image' ? [ensureImage(docId, it.blobId)] : [])));
+  const blobIds = page.items.flatMap((it) => (it.kind === 'image' ? [it.blobId] : []));
+  if (page.background) blobIds.push(page.background.blobId);
+  await Promise.all(blobIds.map((id) => ensureImage(docId, id)));
   const canvas = document.createElement('canvas');
   paintPage(canvas, page, 2, 1, { items: { images: imageResolver(docId) } });
   const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/png'));
