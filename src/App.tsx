@@ -3,6 +3,7 @@ import { Library } from './ui/Library';
 import { Editor } from './ui/Editor';
 import { TimerWatcher } from './ui/Timer';
 import { Presentation } from './ui/Presentation';
+import { openTab } from './ui/tabsStore';
 
 // Hash routing: #/ = library, #/n/<id> = notebook, #/present/<id> = presentation window.
 // Keeps deep links working on any static host without server rewrites.
@@ -26,10 +27,15 @@ function MainApp() {
     window.addEventListener('hashchange', on);
     return () => window.removeEventListener('hashchange', on);
   }, []);
+  // Keyed by notebook: switching tabs starts a fresh editor rather than reusing one mid-load.
+  // Any notebook that is open has a tab, however it was opened (library, link, reload).
+  useEffect(() => {
+    if (docId) openTab(docId);
+  }, [docId]);
 
   return (
     <>
-      {docId ? <Editor id={docId} onExit={() => (location.hash = '#/')} /> : <Library onOpen={(id) => (location.hash = `#/n/${id}`)} />}
+      {docId ? <Editor key={docId} id={docId} onExit={() => (location.hash = '#/')} /> : <Library onOpen={(id) => (location.hash = `#/n/${id}`)} />}
       <TimerWatcher />
     </>
   );

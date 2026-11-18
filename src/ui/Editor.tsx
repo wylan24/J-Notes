@@ -6,13 +6,15 @@ import { deleteSelectionOps, selectionBounds } from '../core/selection';
 import { appendPage, getBlobs, getMeta, listElements, loadDocument, putBlob, saveElement, updateMeta } from '../storage/db';
 import { bookmarkedIndices, changeTemplateOp, clonePage, duplicatePageOp, insertPageOp, insertPagesOps, isBookmarked, pageBlobIds, toggleBookmarkOp } from '../core/pages';
 import { pagesFromFiles } from '../io/importPages';
-import { afterEditorClose, settleQuicknote } from '../storage/quicknotes';
+import { afterEditorClose, settleQuicknote, settleQuicknoteById } from '../storage/quicknotes';
 import { isUnlocked, markUnlocked } from '../core/lock';
 import { LockScreen } from './Lock';
 import { movePageOp, removeItemsOp, updateItemOp } from '../core/ops';
 import { LINK_PAD, LINK_TEXT_SIZE, linkLabel, newLink, pastedUrl, pushBack, type BackEntry } from '../core/links';
 import { LinkDialog } from './LinkDialog';
 import { usePresenter } from './usePresenter';
+import { TabsBar } from './TabsBar';
+import { closeTab, isTabOpen, savedPosition, savePosition } from './tabsStore';
 import { ChangeTemplateDialog, NotebookPickerDialog, PageMenuItems, type PageActionHandlers } from './PageActions';
 import { PageSidebar, type SidebarTab } from './PageSidebar';
 import { OutlinePanel } from './OutlinePanel';
@@ -281,13 +283,25 @@ function EditorInner({
         (async () => {
           if (thumbnail) await updateMeta(docId, { thumbnail });
           await persister.dispose();
-          // StrictMode remounts at once; settle the quick note only if the notebook really closed.
+          // StrictMode remounts at once; settle the quick note only if the notebook really closed:
+          // not shown here any more, and its tab closed too (switching tabs keeps it).
           await new Promise((r) => setTimeout(r, 0));
-          if (!openEditors.get(docId)) await settleQuicknote(docId, store.doc);
+          if (!openEditors.get(docId) && !isTabOpen(docId)) await settleQuicknote(docId, store.doc);
         })(),
       );
     };
   }, [store, snapshotSeq]);
+
+  // Coming back to a notebook (another tab, or the library) returns to where it was left.
+  useLayoutEffect(() => {
+    const p = savedPosition(initialMeta.id);
+    const el = scrollerRef.current;
+    if (p && el) {
+      el.scrollTop = p.scrollTop;
+      el.scrollLeft = p.scrollLeft;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // --- Zoom with a fixed anchor point ----------------------------------------------
   const pendingAnchor = useRef<{ cx: number; cy: number; px: number; py: number } | null>(null);
@@ -501,7 +515,20 @@ function EditorInner({
   }, [recState]);
   const exit = async () => {
     if (recState !== 'idle') await finishRecording();
+    // A quick note's tab closes when you leave it, so an empty one is discarded as before.
+    if (meta.quicknote) closeTab(meta.id, meta.id);
     onExit();
+  };
+
+  /** Tabs: switch to another open notebook, or close one (the shown one closes to its neighbour). */
+  const switchTab = (id: string) => (location.hash = `#/n/${id}`);
+  const tabClosed = (id: string, next: string | null) => {
+    if (id !== meta.id) {
+      afterEditorClose(settleQuicknoteById(id));
+      return;
+    }
+    if (next) switchTab(next);
+    else onExit();
   };
   const seekInk = useCallback((rec: string, t: number) => audioApi.current?.seek(rec, t), []);
 
@@ -993,12 +1020,14 @@ function EditorInner({
   const onScroll = () => {
     const el = scrollerRef.current;
     if (!el) return;
+    savePosition(meta.id, { scrollTop: el.scrollTop, scrollLeft: el.scrollLeft });
     const { starts } = pageOffsets(doc.pages, zoom, PAGE_GAP, scrollDir);
     setCurrentPage(pageIndexAt(starts, scrollDir === 'vertical' ? el.scrollTop + el.clientHeight / 2 : el.scrollLeft + el.clientWidth / 2));
   };
 
   return (
     <div className="editor">
+      <TabsBar active={meta.id} activeTitle={meta.title} onSwitch={switchTab} onClosed={tabClosed} />
       <header className="toolbar" data-no-gesture ref={toolbarRef}>
         <div className="tb-group" ref={leftGroupRef}>
           <button className="icon-btn" onClick={() => void exit()} aria-label="Back to library" title="Library">

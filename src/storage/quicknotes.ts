@@ -47,3 +47,11 @@ export async function sweepQuicknotes(now = Date.now()): Promise<number> {
   }
   return removed;
 }
+
+/** Settle a quick note that isn't open in an editor (its tab was closed from elsewhere). */
+export async function settleQuicknoteById(id: string): Promise<void> {
+  const meta = await getMeta(id);
+  if (!meta?.quicknote) return;
+  const { doc } = await loadDocument(id);
+  await settleQuicknote(id, doc);
+}
