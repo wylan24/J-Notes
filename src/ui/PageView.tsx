@@ -78,6 +78,8 @@ interface Props {
   stickyColors: string[];
   /** Save the lasso selection to the elements library. */
   onSaveElement?: (sel: Selection) => void;
+  /** Add the selection's area to the notebook's outline. */
+  onAddToOutline?: (sel: Selection) => void;
   /** An audio recording playing at time `t` (ms): its ink that hasn't been reached yet is drawn faded. */
   playback?: { rec: string; t: number } | null;
   /** When set, tapping ink written during a recording plays the audio from there instead of using the tool. */
@@ -213,7 +215,7 @@ function paintLaser(ctx: CanvasRenderingContext2D, trail: LaserPoint[], now: num
   ctx.restore();
 }
 
-export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, playback, onSeekInk, highlights }: Props) {
+export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, onAddToOutline, playback, onSeekInk, highlights }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const baseRef = useRef<HTMLCanvasElement>(null);
   const liveRef = useRef<HTMLCanvasElement>(null);
@@ -1002,6 +1004,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
               <button onClick={deleteSelection}>Delete</button>
               <button onClick={duplicateSelection}>Duplicate</button>
               {onSaveElement && selected && <button onClick={() => onSaveElement(selected)}>Save as element</button>}
+              {onAddToOutline && selected && <button onClick={() => onAddToOutline(selected)}>Add to outline</button>}
               {soleItem?.kind === 'text' && (
                 <>
                   <span className="divider" />

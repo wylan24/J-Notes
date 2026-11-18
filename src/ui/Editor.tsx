@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { pageIndexAt, pageSize, pageTops, type EraseMode, type InkTool, type NotebookMeta, type PenStyle, type Template, type ToolKind } from '../core/model';
+import { pageIndexAt, pageSize, pageTops, type EraseMode, type InkTool, type NotebookMeta, type OutlineEntry, type PenStyle, type Template, type ToolKind } from '../core/model';
 import { newId } from '../core/ids';
 import { DocumentStore } from '../core/store';
-import { deleteSelectionOps } from '../core/selection';
+import { deleteSelectionOps, selectionBounds } from '../core/selection';
 import { appendPage, getBlobs, getMeta, listElements, loadDocument, putBlob, saveElement, updateMeta } from '../storage/db';
 import { bookmarkedIndices, changeTemplateOp, clonePage, duplicatePageOp, insertPageOp, insertPagesOps, isBookmarked, pageBlobIds, toggleBookmarkOp } from '../core/pages';
 import { pagesFromFiles } from '../io/importPages';
@@ -11,7 +11,9 @@ import { isUnlocked, markUnlocked } from '../core/lock';
 import { LockScreen } from './Lock';
 import { movePageOp } from '../core/ops';
 import { ChangeTemplateDialog, NotebookPickerDialog, PageMenuItems, type PageActionHandlers } from './PageActions';
-import { PageSidebar } from './PageSidebar';
+import { PageSidebar, type SidebarTab } from './PageSidebar';
+import { OutlinePanel } from './OutlinePanel';
+import { addOutlineEntry } from '../core/outline';
 import { SearchPanel, type SearchHit } from './SearchPanel';
 import { PdfExportDialog } from './PdfExportDialog';
 import type { CustomTemplate } from './TemplateGrid';
@@ -663,6 +665,43 @@ function EditorInner({
     el.scrollTo({ top: Math.max(0, top), behavior: 'auto' });
   };
 
+  // --- Outline -----------------------------------------------------------------------------
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('pages');
+  const [outlineRenaming, setOutlineRenaming] = useState<string | null>(null);
+  const highlightTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  /** Add an entry and show it in the Outline tab, ready to be named. */
+  const addToOutline = (target: Pick<OutlineEntry, 'pageId' | 'rect'>, title: string) => {
+    const added = addOutlineEntry(store.doc, target, title);
+    if (!added) return;
+    store.dispatch([added.op]);
+    setSidebarOpen(true);
+    setSidebarTab('outline');
+    setOutlineRenaming(added.id);
+  };
+
+  const addSelectionToOutline = (sel: Selection) => {
+    const index = store.doc.pages.findIndex((p) => p.id === sel.pageId);
+    const page = store.doc.pages[index];
+    const b = page && selectionBounds(page, sel);
+    if (!page || !b) return;
+    // Name it after selected typed text, if there is any.
+    const text = page.items.find((it): it is Extract<typeof it, { kind: 'text' }> => it.kind === 'text' && sel.itemIds.includes(it.id) && !!it.text.trim());
+    const title = text ? text.text.trim().split('\n')[0].slice(0, 60) : `Page ${index + 1}`;
+    setSelection(null);
+    addToOutline({ pageId: page.id, rect: { x: b.minX, y: b.minY, w: b.maxX - b.minX, h: b.maxY - b.minY } }, title);
+  };
+
+  /** Go to an entry: its page, or its region, which is briefly highlighted. */
+  const jumpToEntry = (entry: OutlineEntry) => {
+    const index = store.doc.pages.findIndex((p) => p.id === entry.pageId);
+    if (index < 0) return;
+    if (!entry.rect) return scrollToPage(index);
+    showSearchHit({ pageId: entry.pageId, rects: [entry.rect] });
+    clearTimeout(highlightTimer.current);
+    highlightTimer.current = setTimeout(() => setSearchHit((h) => (h?.pageId === entry.pageId ? null : h)), 1600);
+  };
+
   const movePage = (pageId: string, to: number) => {
     const op = movePageOp(store.doc, pageId, to);
     if (op) store.dispatch([op]);
@@ -1096,6 +1135,19 @@ function EditorInner({
           actions={pageActions}
           bookmarks={bookmarkedIndices(doc)}
           onToggleBookmark={toggleBookmark}
+          tab={sidebarTab}
+          onTab={setSidebarTab}
+          outline={
+            <OutlinePanel
+              doc={doc}
+              currentPage={currentPage}
+              renaming={outlineRenaming}
+              onRenamed={() => setOutlineRenaming(null)}
+              onJump={jumpToEntry}
+              onAddPage={() => doc.pages[currentPage] && addToOutline({ pageId: doc.pages[currentPage].id }, `Page ${currentPage + 1}`)}
+              dispatch={(op) => op && store.dispatch([op])}
+            />
+          }
         />
       )}
       <div className="canvas-area" ref={areaRef}>
@@ -1133,6 +1185,7 @@ function EditorInner({
               stickyColors={STICKY_COLORS}
               rulerEdges={ruler ? rulerEdgesClient : undefined}
               onSaveElement={(sel) => void saveAsElement(sel)}
+              onAddToOutline={addSelectionToOutline}
               playback={playback}
               onSeekInk={audioOpen && recState === 'idle' && recordings.length ? seekInk : undefined}
               zoomTarget={zoomTarget}

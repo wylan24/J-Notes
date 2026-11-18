@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { pageSize, type Page } from '../core/model';
 import { dropTarget, stackLayout, visibleRange } from '../core/pages';
 import { paintPage } from '../render/page';
@@ -72,6 +72,8 @@ interface Press {
   mouse: boolean;
 }
 
+export type SidebarTab = 'pages' | 'bookmarks' | 'outline';
+
 export function PageSidebar({
   pages,
   docId,
@@ -81,6 +83,9 @@ export function PageSidebar({
   actions,
   bookmarks,
   onToggleBookmark,
+  tab,
+  onTab,
+  outline,
 }: {
   pages: readonly Page[];
   docId: string;
@@ -91,8 +96,12 @@ export function PageSidebar({
   /** Indices of bookmarked pages, in page order. */
   bookmarks: readonly number[];
   onToggleBookmark: (pageId: string) => void;
+  tab: SidebarTab;
+  onTab: (tab: SidebarTab) => void;
+  /** The Outline tab's content. */
+  outline: ReactNode;
 }) {
-  const [tab, setTab] = useState<'pages' | 'bookmarks'>('pages');
+  const setTab = onTab;
   const marked = useMemo(() => new Set(bookmarks), [bookmarks]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ top: 0, height: 800 });
@@ -247,15 +256,19 @@ export function PageSidebar({
   const slotY = (slot: number) => PAD + (slot < tops.length ? tops[slot] - GAP / 2 : height + GAP / 2);
 
   return (
-    <aside className="sidebar" data-no-gesture aria-label="Pages">
+    <aside className={`sidebar ${tab === 'outline' ? 'wide' : ''}`} data-no-gesture aria-label="Pages">
       <div className="sidebar-tabs" role="tablist">
         <button role="tab" aria-selected={tab === 'pages'} className={tab === 'pages' ? 'active' : ''} onClick={() => setTab('pages')}>
           Pages
         </button>
-        <button role="tab" aria-selected={tab === 'bookmarks'} className={tab === 'bookmarks' ? 'active' : ''} onClick={() => setTab('bookmarks')}>
-          Bookmarks
+        <button role="tab" aria-label="Bookmarks" aria-selected={tab === 'bookmarks'} className={tab === 'bookmarks' ? 'active' : ''} onClick={() => setTab('bookmarks')}>
+          Marks
+        </button>
+        <button role="tab" aria-selected={tab === 'outline'} className={tab === 'outline' ? 'active' : ''} onClick={() => setTab('outline')}>
+          Outline
         </button>
       </div>
+      {tab === 'outline' && outline}
       {tab === 'bookmarks' && (
         <div className="sidebar-scroll bookmark-list" role="tabpanel" aria-label="Bookmarks">
           {bookmarks.length === 0 ? (

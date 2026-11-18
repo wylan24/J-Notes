@@ -204,10 +204,26 @@ export interface NotebookDoc {
   recordings?: Recording[];
   /** Ids of bookmarked pages, in the order they were bookmarked. Absent when there are none. */
   bookmarks?: string[];
+  /** The notebook's outline, in reading order. Absent when it has none. */
+  outline?: OutlineEntry[];
+}
+
+/**
+ * One line of a notebook's outline: a title pointing at a page, or at a region of one.
+ * The outline is a flat list; `level` (0 = top) makes the hierarchy, and each entry is at most
+ * one level deeper than the one before it.
+ */
+export interface OutlineEntry {
+  id: string;
+  title: string;
+  pageId: string;
+  /** The region it points at, in page units; absent for the whole page. */
+  rect?: { x: number; y: number; w: number; h: number };
+  level: number;
 }
 
 /** Notebook-level fields a `doc.updated` op can change. An undefined value means the field is absent. */
-export type DocPatch = Partial<Pick<NotebookDoc, 'bookmarks'>>;
+export type DocPatch = Partial<Pick<NotebookDoc, 'bookmarks' | 'outline'>>;
 
 /** Library-level projection of a notebook (what the library grid shows). */
 export interface NotebookMeta {

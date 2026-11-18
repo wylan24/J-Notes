@@ -1,4 +1,5 @@
-import { normalizeDoc, type NotebookDoc, type NotebookMeta, type Template } from '../core/model';
+import { normalizeDoc, type NotebookDoc, type NotebookMeta, type OutlineEntry, type Template } from '../core/model';
+import { normaliseLevels } from '../core/outline';
 import { newId } from '../core/ids';
 import { isCoverDataUrl } from '../core/cover';
 import type { StoredBlob } from '../storage/db';
@@ -70,6 +71,7 @@ export function fromFile(raw: unknown): { meta: NotebookMeta; doc: NotebookDoc; 
       pages: f.doc.pages,
       ...(Array.isArray(f.doc.recordings) ? { recordings: f.doc.recordings } : {}),
       ...(Array.isArray(f.doc.bookmarks) && f.doc.bookmarks.length ? { bookmarks: f.doc.bookmarks.filter((b) => typeof b === 'string') } : {}),
+      ...outlineFrom(f.doc.outline),
     }),
     blobs,
     meta: {
@@ -108,4 +110,20 @@ export function dataUrlToBytes(url: string): { type: string; bytes: ArrayBuffer 
   const u8 = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
   return { type: m[1] || 'application/octet-stream', bytes: u8.buffer };
+}
+
+/** A file's outline, keeping only well-formed entries. */
+function outlineFrom(raw: unknown): { outline?: OutlineEntry[] } {
+  if (!Array.isArray(raw)) return {};
+  const num = (v: unknown) => typeof v === 'number' && Number.isFinite(v);
+  const entries = raw.filter(
+    (e): e is OutlineEntry =>
+      !!e &&
+      typeof e.id === 'string' &&
+      typeof e.title === 'string' &&
+      typeof e.pageId === 'string' &&
+      num(e.level) &&
+      (e.rect === undefined || (num(e.rect?.x) && num(e.rect?.y) && num(e.rect?.w) && num(e.rect?.h))),
+  );
+  return entries.length ? { outline: normaliseLevels(entries) } : {};
 }
