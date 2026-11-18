@@ -7,6 +7,7 @@ import { createNotebook, deleteFolder, deleteNotebook, listFolders, listNotebook
 import { childFolders, countInFolder, effectiveFolder } from '../core/folders';
 import { NATURAL_DIR, normalizeLibraryPrefs, sortFolders, sortNotebooks, type LibraryPrefs, type SortKey } from '../core/librarySort';
 import { Breadcrumbs, FolderCard, FolderDialog, FolderPicker } from './Folders';
+import { COVERS, CoverPicker, EditNotebookDialog } from './CoverPicker';
 import { fromFile } from '../io/notebookFile';
 import { quicknoteTitle } from '../core/quicknote';
 import { editorClosed, sweepQuicknotes } from '../storage/quicknotes';
@@ -14,7 +15,6 @@ import { pagesFromFiles, titleFromFileName } from '../io/importPages';
 import { Icon } from './icons';
 
 const isNotebookFile = (f: File) => /\.json$/i.test(f.name) || f.type === 'application/json';
-const COVERS = ['#3d5a80', '#c8553d', '#2a9d8f', '#e9c46a', '#6d597a', '#264653'];
 const SIZES: { id: PageSizePreset; label: string }[] = [
   { id: 'a4', label: 'A4' },
   { id: 'a5', label: 'A5' },
@@ -61,6 +61,7 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
     }
   };
   const [folderDialog, setFolderDialog] = useState<{ edit?: Folder } | null>(null);
+  const [editing, setEditing] = useState<NotebookMeta | null>(null);
   const [moving, setMoving] = useState<{ kind: 'notebook' | 'folder'; id: string; name: string; current: string | null } | null>(null);
   const [tab, setTab] = useState<Tab>('all');
   // Sort order and grid/list layout, remembered in this browser.
@@ -156,12 +157,12 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
     refresh();
   };
 
-  const create = async (title: string, setup: PageSetup, cover: string, blobs: { id: string; type: string; bytes: ArrayBuffer }[]) => {
+  const create = async (title: string, setup: PageSetup, cover: string, coverImage: string | undefined, blobs: { id: string; type: string; bytes: ArrayBuffer }[]) => {
     const id = newId();
     const now = Date.now();
     const { template } = setup;
     await createNotebook(
-      { id, title: title.trim() || 'Untitled notebook', cover, template, createdAt: now, updatedAt: now, favourite: false, trashedAt: null, pageCount: 1, ...fileHere },
+      { id, title: title.trim() || 'Untitled notebook', cover, ...(coverImage ? { coverImage } : {}), template, createdAt: now, updatedAt: now, favourite: false, trashedAt: null, pageCount: 1, ...fileHere },
       { id, pages: [blankPage(newId(), setup)] },
       blobs.map((b) => ({ docId: id, ...b })),
     );
@@ -341,7 +342,11 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
             <li key={n.id} className="card">
               <button className="cover" onClick={() => n.trashedAt === null && onOpen(n.id)} disabled={n.trashedAt !== null} aria-label={`Open ${n.title}`}>
                 <span className="spine" style={{ background: n.cover }} />
-                {n.thumbnail ? <img src={n.thumbnail} alt="" /> : <span className="cover-blank" style={{ background: n.cover }} />}
+                {n.coverImage || n.thumbnail ? (
+                  <img src={n.coverImage ?? n.thumbnail} alt="" />
+                ) : (
+                  <span className="cover-blank" style={{ background: n.cover }} />
+                )}
               </button>
               {/* Clicking the title opens too (the cover button is the keyboard and screen reader target). */}
               <div className="card-meta" onClick={() => n.trashedAt === null && onOpen(n.id)}>
@@ -358,14 +363,7 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
                     <button className={`icon-btn sm ${n.favourite ? 'starred' : ''}`} aria-label={n.favourite ? 'Unfavourite' : 'Favourite'} onClick={() => void patch(n.id, { favourite: !n.favourite })}>
                       <Icon name="star" />
                     </button>
-                    <button
-                      className="icon-btn sm"
-                      aria-label="Rename"
-                      onClick={() => {
-                        const t = prompt('Rename notebook', n.title);
-                        if (t?.trim()) void patch(n.id, { title: t.trim() });
-                      }}
-                    >
+                    <button className="icon-btn sm" aria-label={`Edit ${n.title}`} title="Rename or change cover" onClick={() => setEditing(n)}>
                       <Icon name="pencil" />
                     </button>
                     <button
@@ -404,6 +402,19 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
       )}
 
       {creating && <NewNotebookDialog onCancel={() => setCreating(false)} onCreate={create} />}
+      {editing && (
+        <EditNotebookDialog
+          title={editing.title}
+          cover={editing.cover}
+          coverImage={editing.coverImage}
+          onCancel={() => setEditing(null)}
+          onSave={(title, cover, coverImage) => {
+            // A rename also keeps a quick note, as renaming in the editor does.
+            void patch(editing.id, { title, cover, coverImage, ...(title !== editing.title ? { quicknote: undefined } : {}) });
+            setEditing(null);
+          }}
+        />
+      )}
       {folderDialog && <FolderDialog folder={folderDialog.edit} onCancel={() => setFolderDialog(null)} onSave={(name, color) => void saveFolder(name, color)} />}
       {moving && (
         <FolderPicker
@@ -435,7 +446,7 @@ function Segmented<T extends string>({ label, options, value, onChange }: { labe
   );
 }
 
-function NewNotebookDialog({ onCancel, onCreate }: { onCancel: () => void; onCreate: (title: string, setup: PageSetup, cover: string, blobs: CustomTemplate['blob'][]) => void }) {
+function NewNotebookDialog({ onCancel, onCreate }: { onCancel: () => void; onCreate: (title: string, setup: PageSetup, cover: string, coverImage: string | undefined, blobs: CustomTemplate['blob'][]) => void }) {
   const [title, setTitle] = useState('');
   const [template, setTemplate] = useState<Template | 'image'>('ruled');
   const [custom, setCustom] = useState<CustomTemplate | null>(null);
@@ -443,6 +454,7 @@ function NewNotebookDialog({ onCancel, onCreate }: { onCancel: () => void; onCre
   const [orientation, setOrientation] = useState<Orientation>('portrait');
   const [paper, setPaper] = useState<Paper>('white');
   const [cover, setCover] = useState(COVERS[0]);
+  const [coverImage, setCoverImage] = useState<string | undefined>();
   const size = useMemo(() => sizeFor(preset, orientation), [preset, orientation]);
 
   return (
@@ -454,8 +466,8 @@ function NewNotebookDialog({ onCancel, onCreate }: { onCancel: () => void; onCre
         onClick={(e) => e.stopPropagation()}
         onSubmit={(e) => {
           e.preventDefault();
-          if (template === 'image' && custom) onCreate(title, { template: 'blank', size, paper, background: { kind: 'image', blobId: custom.blob.id } }, cover, [custom.blob]);
-          else onCreate(title, { template: template === 'image' ? 'blank' : template, size, paper }, cover, []);
+          if (template === 'image' && custom) onCreate(title, { template: 'blank', size, paper, background: { kind: 'image', blobId: custom.blob.id } }, cover, coverImage, [custom.blob]);
+          else onCreate(title, { template: template === 'image' ? 'blank' : template, size, paper }, cover, coverImage, []);
         }}
       >
         <h2>New notebook</h2>
@@ -463,14 +475,7 @@ function NewNotebookDialog({ onCancel, onCreate }: { onCancel: () => void; onCre
           <span>Title</span>
           <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Untitled notebook" />
         </label>
-        <fieldset className="field">
-          <legend>Cover</legend>
-          <div className="cover-row">
-            {COVERS.map((c) => (
-              <button type="button" key={c} className={`cover-pick ${cover === c ? 'active' : ''}`} style={{ background: c }} onClick={() => setCover(c)} aria-label={`Cover ${c}`} />
-            ))}
-          </div>
-        </fieldset>
+        <CoverPicker color={cover} onColor={setCover} image={coverImage} onImage={setCoverImage} />
         <Segmented label="Size" options={SIZES} value={preset} onChange={setPreset} />
         <Segmented label="Orientation" options={ORIENTATIONS} value={orientation} onChange={setOrientation} />
         <fieldset className="field">

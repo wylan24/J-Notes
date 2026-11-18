@@ -1,5 +1,6 @@
 import { normalizeDoc, type NotebookDoc, type NotebookMeta, type Template } from '../core/model';
 import { newId } from '../core/ids';
+import { isCoverDataUrl } from '../core/cover';
 import type { StoredBlob } from '../storage/db';
 
 /**
@@ -13,6 +14,8 @@ export interface NotebookFile {
   version: 1 | 2;
   title: string;
   cover: string;
+  /** Custom cover picture (data URL); absent when the notebook has none. */
+  coverImage?: string;
   template: Template;
   doc: NotebookDoc;
   blobs?: Record<string, string>;
@@ -34,7 +37,16 @@ export function toFile(meta: NotebookMeta, doc: NotebookDoc, blobs: Pick<StoredB
   const used = new Set(referencedBlobIds(doc));
   const embedded: Record<string, string> = {};
   for (const b of blobs) if (used.has(b.id)) embedded[b.id] = bytesToDataUrl(b.type, b.bytes);
-  return { format: 'jnotes-notebook', version: 2, title: meta.title, cover: meta.cover, template: meta.template, doc, blobs: embedded };
+  return {
+    format: 'jnotes-notebook',
+    version: 2,
+    title: meta.title,
+    cover: meta.cover,
+    ...(meta.coverImage ? { coverImage: meta.coverImage } : {}),
+    template: meta.template,
+    doc,
+    blobs: embedded,
+  };
 }
 
 export function fromFile(raw: unknown): { meta: NotebookMeta; doc: NotebookDoc; blobs: StoredBlob[] } {
@@ -64,6 +76,8 @@ export function fromFile(raw: unknown): { meta: NotebookMeta; doc: NotebookDoc; 
       id,
       title: String(f.title || 'Imported notebook'),
       cover: f.cover || '#3d5a80',
+      // Only a picture we could have made; anything else is dropped rather than shown.
+      ...(isCoverDataUrl(f.coverImage) ? { coverImage: f.coverImage } : {}),
       template: f.template || 'blank',
       createdAt: now,
       updatedAt: now,

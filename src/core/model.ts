@@ -221,6 +221,8 @@ export interface NotebookMeta {
   trashedAt: number | null;
   pageCount: number;
   thumbnail?: string;
+  /** A custom cover picture, as a small JPEG data URL; shown instead of the first page's thumbnail. */
+  coverImage?: string;
   /** The folder it is filed in; absent for the top level (and for notebooks from before folders). */
   folderId?: string;
   /**

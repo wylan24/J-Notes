@@ -509,3 +509,9 @@ button:disabled { cursor: default; opacity: 0.35; }
 .list .spine { width: 4px; }
 .list .card-meta { flex: 1; min-width: 0; }
 .list .card-actions { margin-top: 0; }
+
+/* ---------- Custom covers ---------- */
+.cover-image-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.cover-image-row .btn svg { width: 16px; height: 16px; vertical-align: -3px; }
+.cover-image-preview { width: 36px; aspect-ratio: 794 / 1123; border-left: 4px solid; border-radius: 2px 5px 5px 2px; overflow: hidden; box-shadow: var(--page-shadow); flex: none; }
+.cover-image-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
