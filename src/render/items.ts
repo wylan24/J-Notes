@@ -1,4 +1,5 @@
-import type { ImageItem, PageItem, StickyItem, TextItem } from '../core/model';
+import type { ImageItem, LinkItem, PageItem, StickyItem, TextItem } from '../core/model';
+import { LINK_PAD, LINK_TEXT_SIZE } from '../core/links';
 import { fontFamily, LINE_HEIGHT, STICKY_ICON, STICKY_PAD, STICKY_TEXT_SIZE, TEXT_PAD, textLines, wrapLines, type MeasureText } from '../core/items';
 import { getBlob } from '../storage/db';
 
@@ -174,6 +175,33 @@ function paintSticky(ctx: CanvasRenderingContext2D, it: StickyItem) {
   ctx.restore();
 }
 
+export const LINK_COLOR = '#2563eb';
+
+/** A visible link is blue underlined text; a hotspot is a faint blue wash with a dashed underline. */
+function paintLink(ctx: CanvasRenderingContext2D, it: LinkItem) {
+  ctx.save();
+  if (it.label) {
+    ctx.font = canvasFont('sans', LINK_TEXT_SIZE);
+    ctx.fillStyle = LINK_COLOR;
+    ctx.textBaseline = 'middle';
+    const y = it.y + it.h / 2;
+    const w = Math.min(it.w - 2 * LINK_PAD, measurer('sans', LINK_TEXT_SIZE)(it.label));
+    ctx.fillText(it.label, it.x + LINK_PAD, y, it.w - 2 * LINK_PAD);
+    ctx.fillRect(it.x + LINK_PAD, y + LINK_TEXT_SIZE * 0.55, w, 1.2);
+  } else {
+    ctx.fillStyle = 'rgba(37, 99, 235, 0.08)';
+    ctx.fillRect(it.x, it.y, it.w, it.h);
+    ctx.strokeStyle = 'rgba(37, 99, 235, 0.7)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.moveTo(it.x, it.y + it.h);
+    ctx.lineTo(it.x + it.w, it.y + it.h);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 /**
  * Paint one layer of items: 'under' is images and text boxes (beneath ink, so they can be
  * written on), 'over' is sticky notes (above ink).
@@ -185,6 +213,7 @@ export function paintItems(ctx: CanvasRenderingContext2D, items: readonly PageIt
     if ((it.kind === 'sticky') !== (layer === 'over')) continue;
     if (it.kind === 'image') paintImage(ctx, it, opts.images);
     else if (it.kind === 'text') paintText(ctx, it);
+    else if (it.kind === 'link') paintLink(ctx, it);
     else paintSticky(ctx, it);
   }
 }

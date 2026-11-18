@@ -4,6 +4,8 @@ import {
   pageSize,
   type EraseMode,
   type InputPoint,
+  type LinkItem,
+  type LinkTarget,
   type Page,
   type PageItem,
   type PenStyle,
@@ -14,6 +16,7 @@ import {
 } from '../core/model';
 import { FONTS, fontFamily, itemAt, LINE_HEIGHT, newSticky, newText, resizeItem, STICKY_PAD, STICKY_TEXT_SIZE, TEXT_PAD, textHeight, type FontKey, type TextStyle } from '../core/items';
 import { newId } from '../core/ids';
+import { linkAt, TAP_MS, TAP_SLOP_PX } from '../core/links';
 import { pointsLength, strokeHitsCircle, type Vec } from '../core/geometry';
 import { edgeNear, mapEdge, projectToEdge, type Edge } from '../core/ruler';
 import { newInkStroke, pressureOf, timeStamp } from './ink';
@@ -80,6 +83,10 @@ interface Props {
   onSaveElement?: (sel: Selection) => void;
   /** Add the selection's area to the notebook's outline. */
   onAddToOutline?: (sel: Selection) => void;
+  /** Go where a tapped link points. */
+  onFollowLink?: (target: LinkTarget) => void;
+  /** Make the selection a link, or edit the link that is selected. */
+  onEditLink?: (sel: Selection, link: LinkItem | null) => void;
   /** An audio recording playing at time `t` (ms): its ink that hasn't been reached yet is drawn faded. */
   playback?: { rec: string; t: number } | null;
   /** When set, tapping ink written during a recording plays the audio from there instead of using the tool. */
@@ -215,7 +222,7 @@ function paintLaser(ctx: CanvasRenderingContext2D, trail: LaserPoint[], now: num
   ctx.restore();
 }
 
-export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, onAddToOutline, playback, onSeekInk, highlights }: Props) {
+export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, onAddToOutline, onFollowLink, onEditLink, playback, onSeekInk, highlights }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const baseRef = useRef<HTMLCanvasElement>(null);
   const liveRef = useRef<HTMLCanvasElement>(null);
@@ -230,6 +237,8 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   const replaced = useRef<Map<string, Stroke[]> | null>(null);
   const laserTrail = useRef<LaserPoint[]>([]);
   const active = useRef<Active | null>(null);
+  /** A press that began on a link; it follows the link if it ends as a tap. */
+  const linkTap = useRef<{ pointerId: number; link: LinkItem; x: number; y: number; t: number; moved: boolean } | null>(null);
   const clearLiveOnNextBase = useRef(false);
   const liveFrame = useRef(0);
   const [drag, setDragState] = useState<{ pointerId: number; sx: number; sy: number; dx: number; dy: number } | null>(null);
@@ -513,6 +522,15 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       commitEdit();
       if (tool.kind === 'text' || tool.kind === 'sticky') return;
     }
+    // A press on a link follows it if it turns out to be a tap, whatever the tool.
+    const link = onFollowLink ? linkAt(pageRef.current, pt, 4 / scale) : null;
+    linkTap.current = link ? { pointerId: e.pointerId, link, x: e.clientX, y: e.clientY, t: performance.now(), moved: false } : null;
+    if (link && (tool.kind === 'text' || tool.kind === 'sticky')) {
+      // These tools act on press, so a press on a link is taken as following it.
+      linkTap.current = null;
+      onFollowLink?.(link.target);
+      return;
+    }
     // Playback mode: tapping recorded ink jumps the audio to when it was written.
     if (onSeekInk) {
       const hit = strokeAtForSeek(pageRef.current.strokes, pt, 8 / scale);
@@ -618,6 +636,8 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const tap = linkTap.current;
+    if (tap && tap.pointerId === e.pointerId && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > TAP_SLOP_PX) tap.moved = true;
     const a = active.current;
     if (!a || e.pointerId !== a.pointerId) return;
     if (e.pointerType === 'touch' && gesture.current.active) {
@@ -668,10 +688,24 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     scheduleLive();
   };
 
-  const finish = (commit: boolean) => {
+  const finish = (commitArg: boolean) => {
     const a = active.current;
     if (!a) return;
     active.current = null;
+    // A quick tap on a link follows it: whatever the tool began (a dot, an erase, a selection) is dropped.
+    const tap = linkTap.current;
+    linkTap.current = null;
+    const follow = commitArg && tap && tap.pointerId === a.pointerId && !tap.moved && performance.now() - tap.t < TAP_MS ? tap.link : null;
+    const commit = commitArg && !follow;
+    if (follow) {
+      if (a.kind === 'ink' && a.holdTimer) clearTimeout(a.holdTimer);
+      hidden.current = null;
+      replaced.current = null;
+      if (a.kind === 'erase') renderBase();
+      clearLive();
+      onFollowLink?.(follow.target);
+      return;
+    }
     if (a.kind === 'ink') {
       if (a.holdTimer) clearTimeout(a.holdTimer);
       if (commit) {
@@ -1005,6 +1039,10 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
               <button onClick={duplicateSelection}>Duplicate</button>
               {onSaveElement && selected && <button onClick={() => onSaveElement(selected)}>Save as element</button>}
               {onAddToOutline && selected && <button onClick={() => onAddToOutline(selected)}>Add to outline</button>}
+              {onEditLink && selected && (
+                <button onClick={() => onEditLink(selected, soleItem?.kind === 'link' ? soleItem : null)}>{soleItem?.kind === 'link' ? 'Edit link' : 'Link…'}</button>
+              )}
+              {soleItem?.kind === 'link' && onFollowLink && <button onClick={() => onFollowLink(soleItem.target)}>Open link</button>}
               {soleItem?.kind === 'text' && (
                 <>
                   <span className="divider" />

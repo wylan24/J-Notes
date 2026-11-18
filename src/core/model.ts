@@ -106,13 +106,26 @@ export interface StickyItem extends ItemBase {
   collapsed: boolean;
 }
 
-export type PageItem = TextItem | ImageItem | StickyItem;
+/** Where a link goes: another page of this notebook, or a web address. */
+export type LinkTarget = { kind: 'page'; pageId: string } | { kind: 'url'; url: string };
+
+/**
+ * A link. With a `label` it is a visible link (a pasted web address); without one it is a hotspot
+ * over whatever is beneath it (a link made from a lasso selection).
+ */
+export interface LinkItem extends ItemBase {
+  kind: 'link';
+  target: LinkTarget;
+  label?: string;
+}
+
+export type PageItem = TextItem | ImageItem | StickyItem | LinkItem;
 
 /** Page fields a `page.updated` op can change. An undefined value means the field is absent. */
 export type PagePatch = Partial<Pick<Page, 'template' | 'size' | 'paper' | 'background'>>;
 
 /** Fields an `items.updated` op can change. */
-export type ItemPatch = Partial<Omit<TextItem, 'id' | 'kind'> & Omit<ImageItem, 'id' | 'kind'> & Omit<StickyItem, 'id' | 'kind'>>;
+export type ItemPatch = Partial<Omit<TextItem, 'id' | 'kind'> & Omit<ImageItem, 'id' | 'kind'> & Omit<StickyItem, 'id' | 'kind'> & Omit<LinkItem, 'id' | 'kind'>>;
 
 /** A custom template: an image in the notebook's blob store, fitted to the page under the template lines. */
 export interface ImageBackground {

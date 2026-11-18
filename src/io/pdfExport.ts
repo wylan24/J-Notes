@@ -8,6 +8,8 @@ import { pagePaper, pageSize, type NotebookDoc, type Page, type PageItem, type S
 import { hexToRgb, placement, type Placement } from '../core/pdfPlacement';
 import { templateLayout } from '../core/templates';
 import { HIGHLIGHTER_ALPHA, strokeSvgPath } from '../render/stroke';
+import { LINK_COLOR } from '../render/items';
+import { LINK_PAD, LINK_TEXT_SIZE } from '../core/links';
 import { PAPER_STYLES } from '../render/page';
 import { getBlob } from '../storage/db';
 
@@ -98,6 +100,14 @@ class ExportContext {
       const fit = encodable(font);
       const lines = textLines(it, (s) => font.widthOfTextAtSize(fit(s), it.size));
       draw.textLines(lines.map(fit), it.x + TEXT_PAD, it.y + TEXT_PAD, it.size, font, it.color);
+      return;
+    }
+    if (it.kind === 'link') {
+      // A visible link keeps its blue underlined label; a hotspot over other content adds nothing visible.
+      if (!it.label) return;
+      const font = await this.font('sans', false);
+      const fit = encodable(font);
+      draw.textLines([fit(it.label)], it.x + LINK_PAD, it.y + it.h / 2 - (LINK_TEXT_SIZE * LINE_HEIGHT) / 2, LINK_TEXT_SIZE, font, LINK_COLOR);
       return;
     }
     // Sticky note.

@@ -557,3 +557,12 @@ button:disabled { cursor: default; opacity: 0.35; }
 .outline-more svg { width: 16px; height: 16px; }
 .outline-rename { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 4px 6px; border: 1px solid var(--accent); border-radius: 6px; background: var(--surface); color: var(--text); }
 .outline-menu { position: fixed; right: auto; min-width: 170px; z-index: 30; }
+
+/* ---------- Links ---------- */
+.back-pill {
+  position: fixed; bottom: max(16px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(calc(-100% - 50px)); z-index: 12;
+  display: inline-flex; align-items: center; gap: 4px; border: 0; border-radius: 999px; padding: 4px 12px 4px 6px;
+  background: var(--accent); color: #fff; font: inherit; font-size: 12px; font-weight: 600; box-shadow: var(--shadow); cursor: pointer;
+}
+.back-pill svg { width: 16px; height: 16px; }
+.link-select { border: 1px solid var(--border); background: var(--surface-2); color: var(--text); border-radius: 10px; padding: 10px 12px; font: inherit; }

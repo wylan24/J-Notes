@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { pageIndexAt, pageSize, pageTops, type EraseMode, type InkTool, type NotebookMeta, type OutlineEntry, type PenStyle, type Template, type ToolKind } from '../core/model';
+import { pageIndexAt, pageSize, pageTops, type EraseMode, type InkTool, type LinkItem, type LinkTarget, type NotebookMeta, type OutlineEntry, type PenStyle, type Template, type ToolKind } from '../core/model';
 import { newId } from '../core/ids';
 import { DocumentStore } from '../core/store';
 import { deleteSelectionOps, selectionBounds } from '../core/selection';
@@ -9,7 +9,9 @@ import { pagesFromFiles } from '../io/importPages';
 import { afterEditorClose, settleQuicknote } from '../storage/quicknotes';
 import { isUnlocked, markUnlocked } from '../core/lock';
 import { LockScreen } from './Lock';
-import { movePageOp } from '../core/ops';
+import { movePageOp, removeItemsOp, updateItemOp } from '../core/ops';
+import { LINK_PAD, LINK_TEXT_SIZE, linkLabel, newLink, pastedUrl, pushBack, type BackEntry } from '../core/links';
+import { LinkDialog } from './LinkDialog';
 import { ChangeTemplateDialog, NotebookPickerDialog, PageMenuItems, type PageActionHandlers } from './PageActions';
 import { PageSidebar, type SidebarTab } from './PageSidebar';
 import { OutlinePanel } from './OutlinePanel';
@@ -19,7 +21,7 @@ import { PdfExportDialog } from './PdfExportDialog';
 import type { CustomTemplate } from './TemplateGrid';
 import { Persister, type SaveStatus } from '../storage/persister';
 import { downloadBlob, exportPagePng, renderContentThumbnail, renderThumbnail } from '../render/page';
-import { imageResolver, primeImage } from '../render/items';
+import { imageResolver, measurer, primeImage } from '../render/items';
 import { isImageFile, prepareImage } from '../io/images';
 import { FONTS, newImage, type FontKey, type TextStyle } from '../core/items';
 import type { PageItem } from '../core/model';
@@ -535,14 +537,39 @@ function EditorInner({
   const insertPhotosRef = useRef(insertPhotos);
   insertPhotosRef.current = insertPhotos;
 
+  /** A pasted web address becomes a link, centred where the photo would go. */
+  const pasteLink = (url: string) => {
+    const target = photoTarget();
+    if (!target) return;
+    const label = linkLabel(url);
+    const w = measurer('sans', LINK_TEXT_SIZE)(label) + 2 * LINK_PAD + 2;
+    const h = LINK_TEXT_SIZE * 1.4 + 2 * LINK_PAD;
+    const size = pageSize(store.doc.pages.find((p) => p.id === target.pageId) ?? {});
+    const x = Math.max(0, Math.min(target.x - w / 2, size.w - w));
+    const y = Math.max(0, Math.min(target.y - h / 2, size.h - h));
+    const link = newLink({ x, y, w, h }, { kind: 'url', url }, label);
+    store.dispatch([{ type: 'items.added', pageId: target.pageId, items: [link] }]);
+    setToolKind('lasso');
+    setSelection({ pageId: target.pageId, strokeIds: [], itemIds: [link.id] });
+  };
+  const pasteLinkRef = useRef(pasteLink);
+  pasteLinkRef.current = pasteLink;
+
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       const t = e.target;
-      if (t instanceof HTMLTextAreaElement || (t instanceof HTMLInputElement && t.type === 'text')) return;
+      if (t instanceof HTMLTextAreaElement || t instanceof HTMLInputElement) return;
       const files = [...(e.clipboardData?.files ?? [])].filter(isImageFile);
-      if (!files.length) return;
-      e.preventDefault();
-      void insertPhotosRef.current(files);
+      if (files.length) {
+        e.preventDefault();
+        void insertPhotosRef.current(files);
+        return;
+      }
+      const url = pastedUrl(e.clipboardData?.getData('text/plain') ?? '');
+      if (url) {
+        e.preventDefault();
+        pasteLinkRef.current(url);
+      }
     };
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);
@@ -700,6 +727,52 @@ function EditorInner({
     showSearchHit({ pageId: entry.pageId, rects: [entry.rect] });
     clearTimeout(highlightTimer.current);
     highlightTimer.current = setTimeout(() => setSearchHit((h) => (h?.pageId === entry.pageId ? null : h)), 1600);
+  };
+
+  // --- Links ---------------------------------------------------------------------------------
+  const [linkDialog, setLinkDialog] = useState<{ sel: Selection; link: LinkItem | null } | null>(null);
+  /** Where page links were followed from, for Back. */
+  const [back, setBack] = useState<BackEntry[]>([]);
+
+  const followLink = (target: LinkTarget) => {
+    if (target.kind === 'url') {
+      window.open(target.url, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    const index = store.doc.pages.findIndex((p) => p.id === target.pageId);
+    const el = scrollerRef.current;
+    if (index < 0 || !el) {
+      setNotice('That page is no longer in this notebook');
+      return;
+    }
+    setBack((b) => pushBack(b, { scrollTop: el.scrollTop, scrollLeft: el.scrollLeft, pageIndex: currentPage }));
+    scrollToPage(index, 'auto');
+  };
+
+  /** Return to exactly where the last page link was followed from. */
+  const goBack = () => {
+    const last = back[back.length - 1];
+    if (!last) return;
+    setBack(back.slice(0, -1));
+    scrollerRef.current?.scrollTo({ top: last.scrollTop, left: last.scrollLeft, behavior: 'auto' });
+  };
+
+  const saveLink = (target: LinkTarget | null) => {
+    const d = linkDialog;
+    setLinkDialog(null);
+    if (!d) return;
+    const page = store.doc.pages.find((p) => p.id === d.sel.pageId);
+    if (!page) return;
+    if (d.link) {
+      const op = target ? updateItemOp(page, d.link.id, { target }) : removeItemsOp(page, [d.link.id]);
+      if (op) store.dispatch([op]);
+      return;
+    }
+    const b = target && selectionBounds(page, d.sel);
+    if (!target || !b) return;
+    const link = newLink({ x: b.minX - 2, y: b.minY - 2, w: b.maxX - b.minX + 4, h: b.maxY - b.minY + 4 }, target);
+    store.dispatch([{ type: 'items.added', pageId: page.id, items: [link] }]);
+    setSelection(null);
   };
 
   const movePage = (pageId: string, to: number) => {
@@ -1186,6 +1259,8 @@ function EditorInner({
               rulerEdges={ruler ? rulerEdgesClient : undefined}
               onSaveElement={(sel) => void saveAsElement(sel)}
               onAddToOutline={addSelectionToOutline}
+              onFollowLink={followLink}
+              onEditLink={(sel, link) => setLinkDialog({ sel, link })}
               playback={playback}
               onSeekInk={audioOpen && recState === 'idle' && recordings.length ? seekInk : undefined}
               zoomTarget={zoomTarget}
@@ -1232,6 +1307,21 @@ function EditorInner({
         <div className="toast" role="status">
           {notice}
         </div>
+      )}
+      {back.length > 0 && !zoomTarget && (
+        <button className="back-pill" data-no-gesture onClick={goBack}>
+          <Icon name="back" /> Back to page {back[back.length - 1].pageIndex + 1}
+        </button>
+      )}
+      {linkDialog && (
+        <LinkDialog
+          pages={doc.pages}
+          initial={linkDialog.link?.target}
+          currentPage={currentPage}
+          onCancel={() => setLinkDialog(null)}
+          onSave={saveLink}
+          onRemove={linkDialog.link ? () => saveLink(null) : undefined}
+        />
       )}
       <div className="page-indicator" data-no-gesture hidden={!!zoomTarget}>
         {currentPage + 1} / {doc.pages.length}
