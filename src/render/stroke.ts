@@ -1,3 +1,4 @@
+import { forDarkPaper } from '../core/color';
 import { getStroke, type StrokeOptions } from 'perfect-freehand';
 import type { InputPoint, Stroke } from '../core/model';
 import { dabsByLevel, pencilAlpha, pencilDabs, type Dab } from '../core/pencil';
@@ -126,9 +127,14 @@ export function strokePath(s: Stroke): Path2D {
   return p;
 }
 
-export function paintStroke(ctx: CanvasRenderingContext2D, s: Stroke, path?: Path2D, alpha = 1): void {
+/**
+ * Paint a committed stroke. On dark paper (`dark`), dark ink is drawn lighter and the highlighter
+ * lightens rather than darkens what is under it, so both stay visible; this is for the screen only.
+ */
+export function paintStroke(ctx: CanvasRenderingContext2D, s: Stroke, path?: Path2D, alpha = 1, dark = false): void {
+  const color = dark && s.tool !== 'highlighter' ? forDarkPaper(s.color) : s.color;
   if (s.tool === 'pen' && s.penStyle === 'pencil') {
-    paintPencilLevels(ctx, pencilPaths(s), s.color, alpha);
+    paintPencilLevels(ctx, pencilPaths(s), color, alpha);
     return;
   }
   path ??= strokePath(s);
@@ -136,9 +142,9 @@ export function paintStroke(ctx: CanvasRenderingContext2D, s: Stroke, path?: Pat
   ctx.globalAlpha = alpha;
   if (s.tool === 'highlighter') {
     ctx.globalAlpha = HIGHLIGHTER_ALPHA * alpha;
-    ctx.globalCompositeOperation = 'multiply';
+    ctx.globalCompositeOperation = dark ? 'screen' : 'multiply';
   }
-  ctx.fillStyle = s.color;
+  ctx.fillStyle = color;
   ctx.fill(path);
   ctx.restore();
 }

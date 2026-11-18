@@ -2,6 +2,10 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import './ui/styles.css';
+import { applyTheme } from './ui/theme';
+
+// Light or dark as chosen, before anything is drawn.
+applyTheme();
 
 // Ask the browser not to evict our IndexedDB data under storage pressure.
 void navigator.storage?.persist?.();

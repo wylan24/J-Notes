@@ -84,14 +84,15 @@ export function paintStrokes(
   hidden?: ReadonlySet<string>,
   replace?: ReadonlyMap<string, Stroke[]>,
   fade?: (s: Stroke) => boolean,
+  dark = false,
 ): void {
   for (const pass of ['highlighter', 'pen'] as const) {
     for (const s of strokes) {
       if (s.tool !== pass || hidden?.has(s.id)) continue;
       const alpha = fade?.(s) ? AHEAD_ALPHA : 1;
       const repl = replace?.get(s.id);
-      if (repl) repl.forEach((r) => paintStroke(ctx, r, undefined, alpha));
-      else paintStroke(ctx, s, undefined, alpha);
+      if (repl) repl.forEach((r) => paintStroke(ctx, r, undefined, alpha, dark));
+      else paintStroke(ctx, s, undefined, alpha, dark);
     }
   }
 }
@@ -108,6 +109,8 @@ export interface PaintOptions {
   fade?: (s: Stroke) => boolean;
   /** Only this part of the page (page units) will be seen: content wholly outside it is skipped. */
   region?: Bounds;
+  /** Keep ink in its real colours on dark paper (exports); otherwise dark ink shows lighter there. */
+  trueColors?: boolean;
 }
 
 const meets = (a: Bounds, b: Bounds) => a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY;
@@ -137,11 +140,13 @@ function paintContent(ctx: CanvasRenderingContext2D, page: Page, opts: PaintOpti
   // A tile of a large page draws only what reaches into it (an item being dragged counts where it is now).
   const strokes = r ? page.strokes.filter((s) => meets(strokeBounds(s), r)) : page.strokes;
   const items = r ? page.items.filter((it) => meets(itemBounds(opts.items?.override?.get(it.id) ?? it), r)) : page.items;
+  const dark = pagePaper(page) === 'dark' && !opts.trueColors;
+  const itemOpts = dark ? { ...opts.items, dark } : opts.items;
   if (page.background) paintBackground(ctx, page.background, pageSize(page), opts);
   paintTemplate(ctx, page.template, pageSize(page), pagePaper(page), r);
-  paintItems(ctx, items, 'under', opts.items);
-  paintStrokes(ctx, strokes, opts.hidden, opts.replace, opts.fade);
-  paintItems(ctx, items, 'over', opts.items);
+  paintItems(ctx, items, 'under', itemOpts);
+  paintStrokes(ctx, strokes, opts.hidden, opts.replace, opts.fade, dark);
+  paintItems(ctx, items, 'over', itemOpts);
 }
 
 /**
@@ -252,7 +257,7 @@ export async function exportPagePng(page: Page, docId: string, filename: string)
     ...(bg?.kind === 'pdf' ? [ensurePdfRaster(docId, bg, pageSize(page), scale)] : []),
   ]);
   const canvas = document.createElement('canvas');
-  paintPage(canvas, page, scale, 1, { items: { images: imageResolver(docId) }, pdf: pdfResolver(docId) });
+  paintPage(canvas, page, scale, 1, { items: { images: imageResolver(docId) }, pdf: pdfResolver(docId), trueColors: true });
   const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/png'));
   if (blob) downloadBlob(blob, filename);
 }
@@ -267,7 +272,7 @@ export async function renderRegionPng(page: Page, docId: string, rect: { x: numb
     ...(bg?.kind === 'pdf' ? [ensurePdfRaster(docId, bg, pageSize(page), scale)] : []),
   ]);
   const canvas = document.createElement('canvas');
-  paintRegion(canvas, page, rect, rect.w * scale, rect.h * scale, 1, { items: { images: imageResolver(docId) }, pdf: pdfResolver(docId) });
+  paintRegion(canvas, page, rect, rect.w * scale, rect.h * scale, 1, { items: { images: imageResolver(docId) }, pdf: pdfResolver(docId), trueColors: true });
   return new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/png'));
 }
 

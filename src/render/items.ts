@@ -1,3 +1,4 @@
+import { forDarkPaper } from '../core/color';
 import type { ImageItem, InputPoint, LineItem, LinkItem, PageItem, ShapeItem, StickyItem, Stroke, TapeItem, TextItem } from '../core/model';
 import { lineStrokes, shapeOutline } from '../core/shapeItems';
 import { linePoints } from '../core/shapes';
@@ -111,6 +112,8 @@ export interface ItemPaintOptions {
   override?: ReadonlyMap<string, PageItem>;
   /** Tape strips currently lifted to show what is under them. */
   revealed?: ReadonlySet<string>;
+  /** On dark paper: dark text and shape outlines show lighter (on screen only). */
+  dark?: boolean;
 }
 
 /** Pixel size of a loaded image, whatever kind of source it is. */
@@ -192,14 +195,15 @@ export function paintRich(ctx: CanvasRenderingContext2D, lines: RichLine[], x: n
   ctx.restore();
 }
 
-function paintText(ctx: CanvasRenderingContext2D, it: TextItem) {
+function paintText(ctx: CanvasRenderingContext2D, it: TextItem, dark: boolean) {
+  const color = dark ? forDarkPaper(it.color) : it.color;
   if (it.rich) {
-    paintRich(ctx, richTextLines({ ...it, rich: it.rich }, measurer(it.font, it.size)), it.x + TEXT_PAD, it.y + TEXT_PAD, it.size, it.font, it.color);
+    paintRich(ctx, richTextLines({ ...it, rich: it.rich }, measurer(it.font, it.size)), it.x + TEXT_PAD, it.y + TEXT_PAD, it.size, it.font, color);
     return;
   }
   ctx.save();
   ctx.font = canvasFont(it.font, it.size);
-  ctx.fillStyle = it.color;
+  ctx.fillStyle = color;
   ctx.textBaseline = 'middle';
   paintLines(ctx, textLines(it, measurer(it.font, it.size)), it.x + TEXT_PAD, it.y + TEXT_PAD, it.size);
   ctx.restore();
@@ -364,7 +368,7 @@ export function shapeInk(it: ShapeItem | LineItem): { fill: Vec[] | null; stroke
 // Items are immutable (ops replace them), so their drawn paths are cached by identity.
 const shapePaths = new WeakMap<PageItem, { fill: Path2D | null; ink: Path2D }>();
 
-function paintShape(ctx: CanvasRenderingContext2D, it: ShapeItem | LineItem) {
+function paintShape(ctx: CanvasRenderingContext2D, it: ShapeItem | LineItem, dark: boolean) {
   let p = shapePaths.get(it);
   if (!p) {
     const { fill, strokes } = shapeInk(it);
@@ -384,15 +388,15 @@ function paintShape(ctx: CanvasRenderingContext2D, it: ShapeItem | LineItem) {
     ctx.fillStyle = it.fill;
     ctx.fill(p.fill);
   }
-  ctx.fillStyle = it.color;
+  ctx.fillStyle = dark ? forDarkPaper(it.color) : it.color;
   ctx.fill(p.ink);
   ctx.restore();
 }
 
 function paintItem(ctx: CanvasRenderingContext2D, it: PageItem, opts: ItemPaintOptions) {
   if (it.kind === 'image') paintImage(ctx, it, opts.images);
-  else if (it.kind === 'shape' || it.kind === 'line') paintShape(ctx, it);
-  else if (it.kind === 'text') paintText(ctx, it);
+  else if (it.kind === 'shape' || it.kind === 'line') paintShape(ctx, it, !!opts.dark);
+  else if (it.kind === 'text') paintText(ctx, it, !!opts.dark);
   else if (it.kind === 'link') paintLink(ctx, it);
   else if (it.kind === 'tape') paintTape(ctx, it, !!opts.revealed?.has(it.id));
   else paintSticky(ctx, it);

@@ -79,3 +79,31 @@ export function normalizeSwatches(raw: unknown): string[] {
   }
   return out.slice(-MAX_SWATCHES);
 }
+
+/**
+ * How ink of `hex` shows on dark paper, on screen: dark colours have their lightness turned over
+ * (black becomes near-white, navy becomes light blue) so they stay readable; light and bright
+ * colours are left alone. The stored colour, and exports, are unchanged.
+ */
+export function forDarkPaper(hex: string): string {
+  const norm = parseHexColor(hex);
+  if (!norm) return hex;
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(norm.slice(i, i + 2), 16) / 255);
+  const lin = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  const luminance = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  if (luminance >= 0.15) return hex;
+  // To HSL, flip the lightness, and back.
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  const d = max - min;
+  const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+  let h = 0;
+  if (d) h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  h = (h * 60 + 360) % 360;
+  const L = Math.min(0.92, Math.max(0.55, 1 - l));
+  const C = (1 - Math.abs(2 * L - 1)) * s;
+  const X = C * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = L - C / 2;
+  const [r1, g1, b1] = h < 60 ? [C, X, 0] : h < 120 ? [X, C, 0] : h < 180 ? [0, C, X] : h < 240 ? [0, X, C] : h < 300 ? [X, 0, C] : [C, 0, X];
+  return rgbToHex(Math.round((r1 + m) * 255), Math.round((g1 + m) * 255), Math.round((b1 + m) * 255));
+}

@@ -42,3 +42,19 @@ describe('colour picking', () => {
     expect(normalizeSwatches(null)).toEqual([]);
   });
 });
+
+describe('ink on dark paper', () => {
+  it('turns dark ink light, keeping its hue, and leaves bright ink alone', async () => {
+    const { forDarkPaper, hexToHsv } = await import('../src/core/color');
+    const black = forDarkPaper('#1c1c1e');
+    expect(hexToHsv(black).v).toBeGreaterThan(0.85);
+    const navy = forDarkPaper('#1a237e');
+    expect(Math.abs(hexToHsv(navy).h - hexToHsv('#1a237e').h)).toBeLessThan(4);
+    expect(hexToHsv(navy).v).toBeGreaterThan(hexToHsv('#1a237e').v);
+    expect(forDarkPaper('#ffe680')).toBe('#ffe680');
+    expect(forDarkPaper('#d1342f')).toBe('#d1342f');
+    // The app's blue pen is too dark to read on dark paper, so it lightens.
+    expect(hexToHsv(forDarkPaper('#2557c7')).v).toBeGreaterThan(hexToHsv('#2557c7').v);
+    expect(forDarkPaper('not a colour')).toBe('not a colour');
+  });
+});

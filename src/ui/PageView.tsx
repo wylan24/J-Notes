@@ -24,7 +24,7 @@ import { FONTS, fontFamily, itemAt, LINE_HEIGHT, newSticky, newText, resizeItem,
 import { newId } from '../core/ids';
 import { LASER_FADE_MS, paintLaser, type LaserPoint } from '../render/laser';
 import { linkAt, TAP_MS, TAP_SLOP_PX } from '../core/links';
-import { pixelToHex } from '../core/color';
+import { forDarkPaper, pixelToHex } from '../core/color';
 import { newTape, tapeAt, tapeRect } from '../core/tape';
 import { isScribble, scribbledStrokes } from '../core/scribble';
 import { inkKind, type InkKind } from '../core/contentKinds';
@@ -318,6 +318,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   // A whiteboard's page is far too big for one canvas: it is painted in tiles, and the live layer
   // covers only the part on screen. `view` is the part of the page (page units) the live layer covers.
   const tiled = isLargePage(size);
+  const darkPaper = pagePaper(page) === 'dark';
   const viewRef = useRef({ x: 0, y: 0, w: size.w, h: size.h });
   if (!tiled) viewRef.current = { x: 0, y: 0, w: size.w, h: size.h };
 
@@ -563,7 +564,8 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     if (a.kind === 'ink') {
       const paths = a.snap ? shapePaths(a.snap.shape) : [[...a.stroke.points, ...a.predicted]];
       // Highlighter on the live layer is drawn opaque and blended via CSS multiply.
-      ctx.fillStyle = a.stroke.color;
+      // On dark paper, ink shows as it will once committed (see paintStroke).
+      ctx.fillStyle = darkPaper && a.stroke.tool !== 'highlighter' ? forDarkPaper(a.stroke.color) : a.stroke.color;
       if (a.stroke.tool === 'highlighter') ctx.globalAlpha = 0.38;
       const style = a.snap ? { ...a.stroke, simulatePressure: false, shape: true } : a.stroke;
       for (const pts of paths) paintInk(ctx, pts, style, !!a.snap);
@@ -773,7 +775,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       return;
     }
     e.currentTarget.setPointerCapture(e.pointerId);
-    if (liveRef.current) liveRef.current.style.mixBlendMode = tool.kind === 'highlighter' ? 'multiply' : 'normal';
+    if (liveRef.current) liveRef.current.style.mixBlendMode = tool.kind === 'highlighter' ? (darkPaper ? 'screen' : 'multiply') : 'normal';
 
     if (tool.kind === 'pen' || tool.kind === 'highlighter' || tool.kind === 'shapes') {
       const highlighter = tool.kind === 'highlighter';
@@ -1624,7 +1626,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
                     minHeight: editing.item.h * scale,
                     padding: TEXT_PAD * scale,
                     font: `${editing.item.size * scale}px/${LINE_HEIGHT} ${fontFamily(editing.item.font)}`,
-                    color: editing.item.color,
+                    color: darkPaper ? forDarkPaper(editing.item.color) : editing.item.color,
                     ...turnStyle(editing.item),
                   }
                 : {
