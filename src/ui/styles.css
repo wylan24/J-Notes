@@ -595,3 +595,14 @@ button:disabled { cursor: default; opacity: 0.35; }
 .nb-tab-close svg { width: 14px; height: 14px; }
 .tabs-bar + .toolbar { padding-top: 6px; }
 .range-value { min-width: 32px; font-variant-numeric: tabular-nums; }
+
+/* ---------- Tool presets ---------- */
+.tool-presets { display: inline-flex; align-items: center; gap: 4px; }
+.preset-wrap { position: relative; display: inline-flex; }
+.preset { position: relative; width: 34px; height: 30px; display: grid; place-items: center; border: 1px solid var(--border); background: var(--surface); border-radius: 9px; padding: 0; cursor: pointer; }
+.preset.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.preset-ink { display: block; border-radius: 50%; }
+.preset-ink.highlighter { border-radius: 2px; opacity: 0.7; }
+.preset-tool { position: absolute; right: 1px; bottom: 0; display: grid; place-items: center; color: var(--muted); }
+.preset-tool svg { width: 10px; height: 10px; }
+.preset-remove { position: absolute; top: -6px; right: -6px; width: 16px; height: 16px; border-radius: 50%; background: #c0392b; color: #fff; font-size: 12px; line-height: 16px; text-align: center; pointer-events: none; }

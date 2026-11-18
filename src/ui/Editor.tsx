@@ -18,6 +18,8 @@ import { closeTab, isTabOpen, savedPosition, savePosition } from './tabsStore';
 import { ChangeTemplateDialog, NotebookPickerDialog, PageMenuItems, type PageActionHandlers } from './PageActions';
 import { PageSidebar, type SidebarTab } from './PageSidebar';
 import { DEFAULT_STABILISE, normaliseStabilise } from '../core/stabilise';
+import { addPreset, applyPreset, makePreset, normalizePresets, removePreset, type ToolPreset } from '../core/presets';
+import { ToolPresets } from './ToolPresets';
 import { OutlinePanel } from './OutlinePanel';
 import { addOutlineEntry } from '../core/outline';
 import { SearchPanel, type SearchHit } from './SearchPanel';
@@ -254,6 +256,13 @@ function EditorInner({
   zoomRef.current = zoom;
 
   useEffect(() => writePref('jnotes.ink', ink), [ink]);
+  // Tool presets: saved looks for the ink tools, remembered in this browser.
+  const [presets, setPresets] = useState<ToolPreset[]>(() => normalizePresets(readPref<unknown>('jnotes.presets', [])));
+  useEffect(() => writePref('jnotes.presets', presets), [presets]);
+  const applyToolPreset = (p: ToolPreset) => {
+    setInk((v) => ({ ...v, [p.tool]: applyPreset(v[p.tool], p) }));
+    setToolKind(p.tool);
+  };
   useEffect(() => writePref('jnotes.eraser', eraser), [eraser]);
   useEffect(() => writePref('jnotes.penOnly', penOnly), [penOnly]);
   useEffect(() => writePref('jnotes.text', textStyle), [textStyle]);
@@ -1288,6 +1297,15 @@ function EditorInner({
                 />
                 <span className="range-value">{Math.round(normaliseStabilise(ink[inkTool].stabilise) * 100)}%</span>
               </label>
+              <span className="divider" />
+              <ToolPresets
+                presets={presets}
+                tool={inkTool}
+                settings={ink[inkTool]}
+                onApply={applyToolPreset}
+                onSave={() => setPresets((list) => addPreset(list, makePreset(inkTool, ink[inkTool])))}
+                onRemove={(id) => setPresets((list) => removePreset(list, id))}
+              />
             </>
           )}
           {inkTool === 'highlighter' && (
