@@ -21,6 +21,7 @@ import { LASER_FADE_MS, paintLaser, type LaserPoint } from '../render/laser';
 import { linkAt, TAP_MS, TAP_SLOP_PX } from '../core/links';
 import { pixelToHex } from '../core/color';
 import { newTape, tapeAt, tapeRect } from '../core/tape';
+import { isScribble, scribbledStrokes } from '../core/scribble';
 import { pointsLength, strokeHitsCircle, type Vec } from '../core/geometry';
 import { edgeNear, mapEdge, projectToEdge, type Edge } from '../core/ruler';
 import { newInkStroke, pressureOf, timeStamp } from './ink';
@@ -57,6 +58,8 @@ export interface ToolState {
   dash: DashStyle;
   /** Colour of new tape. */
   tapeColor: string;
+  /** Scribbling over ink with the pen erases it. */
+  scribbleErase: boolean;
   /** How much the current ink tool steadies the line, 0..1. */
   stabilise: number;
   /** Highlighter draws ruler-straight lines from the first point. */
@@ -102,6 +105,8 @@ interface Props {
   /** Tape strips lifted to show what is under them, and a tap on a strip to lift or lay it back. */
   revealed?: ReadonlySet<string>;
   onToggleTape?: (id: string) => void;
+  /** A pen scribble just erased this many strokes. */
+  onScribbleErase?: (count: number) => void;
   /** Eyedropper: the next press reports the colour under it instead of using the tool. */
   onSample?: (hex: string) => void;
   /** Laser points as they are drawn (page units), for a presentation window; head null when the pen lifts. */
@@ -204,7 +209,7 @@ type Active =
   | { kind: 'laser'; pointerId: number; cursor: Vec }
   | { kind: 'tape'; pointerId: number; start: Vec; cur: Vec };
 
-export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, onAddToOutline, onFollowLink, onEditLink, readOnly, onLaser, onSample, revealed, onToggleTape, playback, onSeekInk, highlights }: Props) {
+export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, onAddToOutline, onFollowLink, onEditLink, readOnly, onLaser, onSample, revealed, onToggleTape, onScribbleErase, playback, onSeekInk, highlights }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const baseRef = useRef<HTMLCanvasElement>(null);
   const liveRef = useRef<HTMLCanvasElement>(null);
@@ -742,6 +747,17 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     if (a.kind === 'ink') {
       if (a.holdTimer) clearTimeout(a.holdTimer);
       if (commit) {
+        // Scribbling over ink with the pen rubs it out (one undo step) instead of adding the scribble.
+        if (tool.kind === 'pen' && tool.scribbleErase && !a.snap && isScribble(a.stroke.points)) {
+          const ids = scribbledStrokes(a.stroke.points, pageRef.current.strokes);
+          const op = ids.length ? removeStrokesOp(pageRef.current, ids) : null;
+          if (op) {
+            clearLiveOnNextBase.current = true;
+            store.dispatch([op]);
+            onScribbleErase?.(ids.length);
+            return;
+          }
+        }
         // The Shapes tool also recognises on lift, without needing a hold.
         const shape = a.snap?.shape ?? (tool.kind === 'shapes' ? recognizeShape(a.stroke.points) : null);
         clearLiveOnNextBase.current = true;

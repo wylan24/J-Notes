@@ -217,6 +217,8 @@ function EditorInner({
   const [textStyle, setTextStyle] = useState<TextStyle>(() => ({ ...DEFAULT_TEXT, ...readPref<Partial<TextStyle>>('jnotes.text', {}) }));
   const [stickyColor, setStickyColor] = useState(() => readPref('jnotes.stickyColor', STICKY_COLORS[0]));
   const [tapeColor, setTapeColor] = useState(() => readPref('jnotes.tapeColor', TAPE_COLORS[0]));
+  const [scribbleErase, setScribbleErase] = useState(() => readPref('jnotes.scribbleErase', true));
+  useEffect(() => writePref('jnotes.scribbleErase', scribbleErase), [scribbleErase]);
   useEffect(() => writePref('jnotes.tapeColor', tapeColor), [tapeColor]);
   // Tape strips lifted to show what is under them: a viewing state for this visit, not saved.
   const [revealed, setRevealed] = useState<ReadonlySet<string>>(new Set());
@@ -443,6 +445,7 @@ function EditorInner({
     text: textStyle,
     stickyColor,
     tapeColor,
+    scribbleErase,
   };
 
   // --- Ruler and zoom window --------------------------------------------------------------
@@ -1340,6 +1343,20 @@ function EditorInner({
               />
             </>
           )}
+          {inkTool === 'pen' && (
+            <>
+              <span className="divider" />
+              <button
+                className={`chip ${scribbleErase ? 'active' : ''}`}
+                aria-pressed={scribbleErase}
+                title="Scribble to erase: scribble back and forth over ink with the pen to rub it out"
+                onClick={() => setScribbleErase(!scribbleErase)}
+              >
+                <Icon name="eraser" />
+                <span className="chip-label">Scribble erase</span>
+              </button>
+            </>
+          )}
           {inkTool === 'highlighter' && (
             <>
               <span className="divider" />
@@ -1523,6 +1540,7 @@ function EditorInner({
               rulerEdges={ruler ? rulerEdgesClient : undefined}
               onSaveElement={(sel) => void saveAsElement(sel)}
               onAddToOutline={addSelectionToOutline}
+              onScribbleErase={(n) => setNotice(`Scribbled out ${n} ${n === 1 ? 'stroke' : 'strokes'} · Undo brings ${n === 1 ? 'it' : 'them'} back`)}
               revealed={revealed}
               onToggleTape={toggleTape}
               onFollowLink={followLink}
