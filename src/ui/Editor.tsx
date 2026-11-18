@@ -21,6 +21,7 @@ import { DEFAULT_STABILISE, normaliseStabilise } from '../core/stabilise';
 import { addPreset, applyPreset, makePreset, normalizePresets, removePreset, type ToolPreset } from '../core/presets';
 import { ToolPresets } from './ToolPresets';
 import { ColorPicker } from './ColorPicker';
+import { LASSO_KINDS, LASSO_LABELS, normalizeLassoSettings, toggleLassoKind, type LassoSettings, type LassoShape } from '../core/lasso';
 import { CONTENT_LABELS, INK_KINDS, normalizeEraseKinds, toggleEraseKind, deleteContentOps, type InkKind } from '../core/contentKinds';
 import { DeleteItemsMenu } from './DeleteItemsMenu';
 import { addSwatch, normalizeSwatches } from '../core/color';
@@ -226,6 +227,8 @@ function EditorInner({
   const [stickyColor, setStickyColor] = useState(() => readPref('jnotes.stickyColor', STICKY_COLORS[0]));
   const [tapeColor, setTapeColor] = useState(() => readPref('jnotes.tapeColor', TAPE_COLORS[0]));
   const [scribbleErase, setScribbleErase] = useState(() => readPref('jnotes.scribbleErase', true));
+  const [lasso, setLasso] = useState<LassoSettings>(() => normalizeLassoSettings(readPref<unknown>('jnotes.lasso', null)));
+  useEffect(() => writePref('jnotes.lasso', lasso), [lasso]);
   useEffect(() => writePref('jnotes.scribbleErase', scribbleErase), [scribbleErase]);
   useEffect(() => writePref('jnotes.tapeColor', tapeColor), [tapeColor]);
   // Tape strips lifted to show what is under them: a viewing state for this visit, not saved.
@@ -450,6 +453,8 @@ function EditorInner({
     eraserPx: eraser.size,
     eraseMode: eraser.mode,
     eraseKinds: eraser.kinds,
+    lassoShape: lasso.shape,
+    lassoKinds: lasso.kinds,
     text: textStyle,
     stickyColor,
     tapeColor,
@@ -1241,7 +1246,7 @@ function EditorInner({
         </div>
       </header>
 
-      {!readOnly && (inkTool || toolKind === 'eraser' || toolKind === 'text' || toolKind === 'sticky' || toolKind === 'tape') && (
+      {!readOnly && (inkTool || toolKind === 'eraser' || toolKind === 'text' || toolKind === 'sticky' || toolKind === 'tape' || toolKind === 'lasso') && (
         <div className="tool-options" data-no-gesture role="toolbar" aria-label="Tool options">
           {inkTool === 'pen' && (
             <>
@@ -1414,6 +1419,35 @@ function EditorInner({
                 <span className="swatch" style={{ background: c }} />
               </button>
             ))}
+          {toolKind === 'lasso' && (
+            <>
+              <div className="segmented" role="radiogroup" aria-label="Lasso shape">
+                {(['freehand', 'rect'] as LassoShape[]).map((m) => (
+                  <button key={m} role="radio" aria-checked={lasso.shape === m} className={lasso.shape === m ? 'active' : ''} onClick={() => setLasso({ ...lasso, shape: m })}>
+                    {m === 'freehand' ? 'Freehand' : 'Rectangle'}
+                  </button>
+                ))}
+              </div>
+              <span className="divider" />
+              <div className="erase-kinds" role="group" aria-label="Lasso selects">
+                <span className="tool-hint">Selects</span>
+                {LASSO_KINDS.map((k) => {
+                  const on = lasso.kinds.includes(k);
+                  return (
+                    <button
+                      key={k}
+                      className={`chip ${on ? 'active' : ''}`}
+                      aria-pressed={on}
+                      onClick={() => setLasso({ ...lasso, kinds: toggleLassoKind(lasso.kinds, k) })}
+                      title={on && lasso.kinds.length === 1 ? 'The lasso has to select something' : `${on ? 'Skip' : 'Select'} ${LASSO_LABELS[k].toLowerCase()}`}
+                    >
+                      <Icon name={k === 'handwriting' ? 'pen' : k} /> {LASSO_LABELS[k]}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
           {toolKind === 'tape' && (
             <>
               {TAPE_COLORS.map((c) => (

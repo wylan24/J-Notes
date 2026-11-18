@@ -23,6 +23,7 @@ import { pixelToHex } from '../core/color';
 import { newTape, tapeAt, tapeRect } from '../core/tape';
 import { isScribble, scribbledStrokes } from '../core/scribble';
 import { inkKind, type InkKind } from '../core/contentKinds';
+import { lassoAllowsItem, lassoPolygon, selectWithLasso, type LassoKind, type LassoShape } from '../core/lasso';
 import { pointsLength, strokeHitsCircle, type Vec } from '../core/geometry';
 import { edgeNear, mapEdge, projectToEdge, type Edge } from '../core/ruler';
 import { newInkStroke, pressureOf, timeStamp } from './ink';
@@ -31,7 +32,6 @@ import {
   deleteSelectionOps,
   duplicateSelection as duplicateSelectionOps,
   moveSelectionOps,
-  selectInLasso,
   selectedStrokes,
   selectionBounds,
   type Selection,
@@ -70,6 +70,10 @@ export interface ToolState {
   eraseMode: EraseMode;
   /** Which ink the eraser erases. */
   eraseKinds: readonly InkKind[];
+  /** Freehand loop or rectangle. */
+  lassoShape: LassoShape;
+  /** What the lasso picks up. */
+  lassoKinds: readonly LassoKind[];
   /** Style for new text boxes. */
   text: TextStyle;
   /** Colour for new sticky notes. */
@@ -207,7 +211,8 @@ type Active =
       cursor: Vec;
       last: Vec;
     }
-  | { kind: 'lasso'; pointerId: number; poly: Vec[] }
+  /** `path` is the raw pointer path; the enclosed area depends on the lasso shape. */
+  | { kind: 'lasso'; pointerId: number; path: Vec[] }
   | { kind: 'laser'; pointerId: number; cursor: Vec }
   | { kind: 'tape'; pointerId: number; start: Vec; cur: Vec };
 
@@ -376,10 +381,11 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
         ctx.fillStyle = tool.tapeColor;
         ctx.fillRect(r.x, r.y, r.w, r.h);
       }
-    } else if (a.kind === 'lasso' && a.poly.length > 1) {
+    } else if (a.kind === 'lasso' && a.path.length > 1) {
+      const poly = lassoPolygon(tool.lassoShape, a.path);
       ctx.beginPath();
-      ctx.moveTo(a.poly[0].x, a.poly[0].y);
-      for (const p of a.poly) ctx.lineTo(p.x, p.y);
+      ctx.moveTo(poly[0].x, poly[0].y);
+      for (const p of poly) ctx.lineTo(p.x, p.y);
       ctx.closePath();
       ctx.fillStyle = 'rgba(64,120,220,0.06)';
       ctx.fill();
@@ -609,7 +615,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     } else if (tool.kind === 'tape') {
       active.current = { kind: 'tape', pointerId: e.pointerId, start: pt, cur: pt };
     } else {
-      active.current = { kind: 'lasso', pointerId: e.pointerId, poly: [pt] };
+      active.current = { kind: 'lasso', pointerId: e.pointerId, path: [pt] };
     }
     scheduleLive();
   };
@@ -716,7 +722,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       laserTrail.current.push(...pts.map((p) => ({ x: p.x, y: p.y, t })));
       onLaser?.(page.id, pts.map((p) => ({ x: p.x, y: p.y })), a.cursor);
     } else {
-      a.poly.push(...pts);
+      a.path.push(...pts);
     }
     scheduleLive();
   };
@@ -784,11 +790,12 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       return;
     } else if (a.kind === 'lasso' && commit) {
       // A tap (rather than a loop) selects the item under it.
-      if (pointsLength(a.poly as InputPoint[]) * scale < 8) {
-        const hit = itemAt(pageRef.current, a.poly[0]);
+      const p = pageRef.current;
+      if (pointsLength(a.path as InputPoint[]) * scale < 8) {
+        const hit = itemAt({ ...p, items: p.items.filter((it) => lassoAllowsItem(tool.lassoKinds, it)) }, a.path[0]);
         setSelection(hit ? { pageId: page.id, strokeIds: [], itemIds: [hit.id] } : null);
       } else {
-        setSelection(selectInLasso(pageRef.current, a.poly));
+        setSelection(selectWithLasso(p, lassoPolygon(tool.lassoShape, a.path), tool.lassoKinds));
       }
     }
     clearLive();
