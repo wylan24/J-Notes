@@ -19,6 +19,7 @@ import { FONTS, fontFamily, itemAt, LINE_HEIGHT, newSticky, newText, resizeItem,
 import { newId } from '../core/ids';
 import { LASER_FADE_MS, paintLaser, type LaserPoint } from '../render/laser';
 import { linkAt, TAP_MS, TAP_SLOP_PX } from '../core/links';
+import { pixelToHex } from '../core/color';
 import { pointsLength, strokeHitsCircle, type Vec } from '../core/geometry';
 import { edgeNear, mapEdge, projectToEdge, type Edge } from '../core/ruler';
 import { newInkStroke, pressureOf, timeStamp } from './ink';
@@ -95,6 +96,8 @@ interface Props {
   onEditLink?: (sel: Selection, link: LinkItem | null) => void;
   /** Read-only: no tool does anything; a tap follows a link (or seeks recorded audio) and nothing else. */
   readOnly?: boolean;
+  /** Eyedropper: the next press reports the colour under it instead of using the tool. */
+  onSample?: (hex: string) => void;
   /** Laser points as they are drawn (page units), for a presentation window; head null when the pen lifts. */
   onLaser?: (pageId: string, points: Vec[], head: Vec | null) => void;
   /** An audio recording playing at time `t` (ms): its ink that hasn't been reached yet is drawn faded. */
@@ -194,7 +197,7 @@ type Active =
   | { kind: 'lasso'; pointerId: number; poly: Vec[] }
   | { kind: 'laser'; pointerId: number; cursor: Vec };
 
-export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, onAddToOutline, onFollowLink, onEditLink, readOnly, onLaser, playback, onSeekInk, highlights }: Props) {
+export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, onAddToOutline, onFollowLink, onEditLink, readOnly, onLaser, onSample, playback, onSeekInk, highlights }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const baseRef = useRef<HTMLCanvasElement>(null);
   const liveRef = useRef<HTMLCanvasElement>(null);
@@ -487,6 +490,22 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (onSample) {
+      // Read the drawn page (paper, PDF, photos, ink) at this point.
+      e.preventDefault();
+      const base = baseRef.current;
+      const r = e.currentTarget.getBoundingClientRect();
+      const ctx = base?.getContext('2d', { willReadFrequently: true });
+      if (!base || !ctx || !base.width) return;
+      const x = Math.floor(((e.clientX - r.left) / r.width) * base.width);
+      const y = Math.floor(((e.clientY - r.top) / r.height) * base.height);
+      try {
+        onSample(pixelToHex(ctx.getImageData(Math.min(x, base.width - 1), Math.min(y, base.height - 1), 1, 1).data));
+      } catch {
+        // A page drawn from something the browser won't let us read: leave the colour as it was.
+      }
+      return;
+    }
     if (readOnly) {
       // Only remember the press: it follows a link if it ends as a tap. Fingers count here even in
       // Stylus only mode (there's nothing to draw); a finger that pans moves, so it won't count as a tap.
@@ -958,7 +977,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       <canvas ref={baseRef} className="page-layer" />
       <canvas
         ref={liveRef}
-        className={`page-layer live ${readOnly ? 'read-only' : `tool-${tool.kind}`}`}
+        className={`page-layer live ${onSample ? 'sampling' : readOnly ? 'read-only' : `tool-${tool.kind}`}`}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={(e) => (readOnly ? readOnlyTap(e.pointerId) : finish(true))}

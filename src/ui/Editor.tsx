@@ -20,6 +20,8 @@ import { PageSidebar, type SidebarTab } from './PageSidebar';
 import { DEFAULT_STABILISE, normaliseStabilise } from '../core/stabilise';
 import { addPreset, applyPreset, makePreset, normalizePresets, removePreset, type ToolPreset } from '../core/presets';
 import { ToolPresets } from './ToolPresets';
+import { ColorPicker } from './ColorPicker';
+import { addSwatch, normalizeSwatches } from '../core/color';
 import { OutlinePanel } from './OutlinePanel';
 import { addOutlineEntry } from '../core/outline';
 import { SearchPanel, type SearchHit } from './SearchPanel';
@@ -259,6 +261,17 @@ function EditorInner({
   // Tool presets: saved looks for the ink tools, remembered in this browser.
   const [presets, setPresets] = useState<ToolPreset[]>(() => normalizePresets(readPref<unknown>('jnotes.presets', [])));
   useEffect(() => writePref('jnotes.presets', presets), [presets]);
+  // Custom colours: one set for pens and shapes, one for the highlighter (its colours are pale).
+  const [swatches, setSwatches] = useState(() => {
+    const saved = readPref<{ ink?: unknown; highlighter?: unknown }>('jnotes.swatches', {});
+    return { ink: normalizeSwatches(saved.ink), highlighter: normalizeSwatches(saved.highlighter) };
+  });
+  useEffect(() => writePref('jnotes.swatches', swatches), [swatches]);
+  const swatchGroup = (t: ColorTool) => (t === 'highlighter' ? 'highlighter' : 'ink');
+  const [picker, setPicker] = useState<{ tool: ColorTool; anchor: DOMRect } | null>(null);
+  /** Eyedropper: the ink tool whose colour the next tap on a page sets. */
+  const [sampling, setSampling] = useState<ColorTool | null>(null);
+
   const applyToolPreset = (p: ToolPreset) => {
     setInk((v) => ({ ...v, [p.tool]: applyPreset(v[p.tool], p) }));
     setToolKind(p.tool);
@@ -1261,7 +1274,7 @@ function EditorInner({
           {inkTool && (
             <>
               {inkTool === 'pen' && <span className="divider" />}
-              {(inkTool === 'highlighter' ? HIGHLIGHT_COLORS : PEN_COLORS).map((c) => (
+              {[...(inkTool === 'highlighter' ? HIGHLIGHT_COLORS : PEN_COLORS), ...swatches[swatchGroup(inkTool)].filter((c) => !(inkTool === 'highlighter' ? HIGHLIGHT_COLORS : PEN_COLORS).includes(c))].map((c) => (
                 <button
                   key={c}
                   className={`swatch-btn ${ink[inkTool].color === c ? 'active' : ''}`}
@@ -1271,6 +1284,17 @@ function EditorInner({
                   <span className="swatch" style={{ background: c }} />
                 </button>
               ))}
+              <button
+                className="swatch-btn color-more"
+                aria-label="More colours"
+                aria-expanded={picker?.tool === inkTool}
+                title="More colours: wheel, HEX, pick from the page"
+                onClick={(e) => setPicker(picker ? null : { tool: inkTool, anchor: e.currentTarget.getBoundingClientRect() })}
+              >
+                <span className="swatch color-more-ring">
+                  <span style={{ background: ink[inkTool].color }} />
+                </span>
+              </button>
               <span className="divider" />
               {WIDTHS[inkTool].map((w, i) => (
                 <button
@@ -1459,6 +1483,15 @@ function EditorInner({
               onFollowLink={followLink}
               readOnly={readOnly}
               onLaser={presenter.presenting ? presenter.sendLaser : undefined}
+              onSample={
+                sampling
+                  ? (hex) => {
+                      setInkTool(sampling, { color: hex });
+                      setSampling(null);
+                      setNotice(`Picked ${hex}`);
+                    }
+                  : undefined
+              }
               onEditLink={(sel, link) => setLinkDialog({ sel, link })}
               playback={playback}
               onSeekInk={audioOpen && recState === 'idle' && recordings.length ? seekInk : undefined}
@@ -1505,6 +1538,29 @@ function EditorInner({
       {notice && (
         <div className="toast" role="status">
           {notice}
+        </div>
+      )}
+      {picker && (
+        <ColorPicker
+          color={ink[picker.tool].color}
+          anchor={picker.anchor}
+          swatches={swatches[swatchGroup(picker.tool)]}
+          onChange={(hex) => setInkTool(picker.tool, { color: hex })}
+          onPickFromPage={() => {
+            setSampling(picker.tool);
+            setPicker(null);
+          }}
+          onAddSwatch={(hex) => setSwatches((s) => ({ ...s, [swatchGroup(picker.tool)]: addSwatch(s[swatchGroup(picker.tool)], hex) }))}
+          onRemoveSwatch={(hex) => setSwatches((s) => ({ ...s, [swatchGroup(picker.tool)]: s[swatchGroup(picker.tool)].filter((c) => c !== hex) }))}
+          onClose={() => setPicker(null)}
+        />
+      )}
+      {sampling && (
+        <div className="sampling-banner" data-no-gesture role="status">
+          <Icon name="eyedropper" /> Tap the page to pick a colour
+          <button className="btn sm ghost" onClick={() => setSampling(null)}>
+            Cancel
+          </button>
         </div>
       )}
       {back.length > 0 && !zoomTarget && (
