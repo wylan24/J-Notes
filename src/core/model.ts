@@ -179,15 +179,28 @@ export function blankPage(id: string, { template, size, paper, background }: Pag
   return page;
 }
 
+/** How pages are laid out: stacked top to bottom, or side by side. */
+export type ScrollDirection = 'vertical' | 'horizontal';
+
+/**
+ * Where each page starts along the scroll direction, in CSS px at `zoom`, plus the total length:
+ * page heights when stacked, widths when side by side.
+ */
+export function pageOffsets(pages: readonly Pick<Page, 'size'>[], zoom: number, gap: number, direction: ScrollDirection = 'vertical'): { starts: number[]; length: number } {
+  const starts: number[] = [];
+  let at = 0;
+  for (const p of pages) {
+    starts.push(at);
+    const s = pageSize(p);
+    at += (direction === 'vertical' ? s.h : s.w) * zoom + gap;
+  }
+  return { starts, length: Math.max(0, at - gap) };
+}
+
 /** Top edge of each page in a vertical stack, in CSS px at `zoom`, plus the total height. */
 export function pageTops(pages: readonly Pick<Page, 'size'>[], zoom: number, gap: number): { tops: number[]; height: number } {
-  const tops: number[] = [];
-  let y = 0;
-  for (const p of pages) {
-    tops.push(y);
-    y += pageSize(p).h * zoom + gap;
-  }
-  return { tops, height: Math.max(0, y - gap) };
+  const { starts, length } = pageOffsets(pages, zoom, gap, 'vertical');
+  return { tops: starts, height: length };
 }
 
 /** Index of the page whose slot (page plus the gap below it) contains `y`, clamped to the stack. */

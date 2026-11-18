@@ -13,6 +13,8 @@ const paths: Record<string, string> = {
   pages: 'M9 3h10v14H9zM5 7v14h10',
   sidebar: 'M4 4h16v16H4zM9.5 4v16',
   bookmark: 'M7 3.5h10v17l-5-4-5 4z',
+  scrollVertical: 'M12 3.5v17M8.5 7L12 3.5 15.5 7M8.5 17l3.5 3.5 3.5-3.5',
+  scrollHorizontal: 'M3.5 12h17M7 8.5L3.5 12 7 15.5M17 8.5l3.5 3.5-3.5 3.5',
   lock: 'M6.5 11h11v9h-11zM8.5 11V8a3.5 3.5 0 017 0v3',
   grid: 'M4.5 4.5h6v6h-6zM13.5 4.5h6v6h-6zM4.5 13.5h6v6h-6zM13.5 13.5h6v6h-6z',
   list: 'M9 6.5h11M9 12h11M9 17.5h11M4.5 6.5h.01M4.5 12h.01M4.5 17.5h.01',

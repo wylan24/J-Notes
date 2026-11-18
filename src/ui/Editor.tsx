@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { pageIndexAt, pageSize, pageTops, type EraseMode, type InkTool, type LinkItem, type LinkTarget, type NotebookMeta, type OutlineEntry, type PenStyle, type Template, type ToolKind } from '../core/model';
+import { pageIndexAt, pageOffsets, pageSize, type EraseMode, type ScrollDirection, type InkTool, type LinkItem, type LinkTarget, type NotebookMeta, type OutlineEntry, type PenStyle, type Template, type ToolKind } from '../core/model';
 import { newId } from '../core/ids';
 import { DocumentStore } from '../core/store';
 import { deleteSelectionOps, selectionBounds } from '../core/selection';
@@ -168,6 +168,8 @@ function EditorInner({
   useSyncExternalStore(store.subscribe, store.getVersion); // re-render for undo/redo state
   const [meta, setMeta] = useState(initialMeta);
   const [zoom, setZoom] = useState(() => readPref('jnotes.zoom', 1));
+  // Pages stacked top to bottom, or side by side; remembered in this browser.
+  const [scrollDir, setScrollDir] = useState<ScrollDirection>(() => (readPref<string>('jnotes.scroll', 'vertical') === 'horizontal' ? 'horizontal' : 'vertical'));
   const [toolKind, setToolKind] = useState<ToolKind>('pen');
   // Merge stored prefs over defaults so settings added later get sane values.
   const [ink, setInk] = useState<InkSettings>(() => {
@@ -235,6 +237,7 @@ function EditorInner({
   useEffect(() => writePref('jnotes.toolbar', toolbarPrefs), [toolbarPrefs]);
   useEffect(() => writePref('jnotes.stickyColor', stickyColor), [stickyColor]);
   useEffect(() => writePref('jnotes.zoom', zoom), [zoom]);
+  useEffect(() => writePref('jnotes.scroll', scrollDir), [scrollDir]);
 
   // --- Persistence ------------------------------------------------------------
   // Created inside the effect (not useMemo) so StrictMode's mount→unmount→mount
@@ -581,10 +584,38 @@ function EditorInner({
   const [sidebarOpen, setSidebarOpen] = useState(() => readPref('jnotes.sidebar', false));
   useEffect(() => writePref('jnotes.sidebar', sidebarOpen), [sidebarOpen]);
 
+  /** Where a page is inside the scrolled content, measured from the page itself, so it holds for either layout. */
+  const pageBox = (index: number): { left: number; top: number; width: number; height: number } | null => {
+    const el = scrollerRef.current;
+    const id = store.doc.pages[index]?.id;
+    const node = id ? el?.querySelector<HTMLElement>(`[data-page-id="${id}"]`) : null;
+    if (!el || !node) return null;
+    const r = node.getBoundingClientRect();
+    const v = el.getBoundingClientRect();
+    return { left: r.left - v.left + el.scrollLeft, top: r.top - v.top + el.scrollTop, width: r.width, height: r.height };
+  };
+
+  // Switching layout keeps the page you were on in view.
+  const keepPage = useRef<number | null>(null);
+  const toggleScrollDir = () => {
+    keepPage.current = currentPage;
+    setScrollDir((d) => (d === 'vertical' ? 'horizontal' : 'vertical'));
+  };
+  useEffect(() => {
+    if (keepPage.current === null) return;
+    scrollToPage(keepPage.current, 'auto');
+    keepPage.current = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollDir]);
+
+  /** Bring a page into view: its top edge (stacked), or centred if it fits (side by side). */
   const scrollToPage = (index: number, behavior: ScrollBehavior = 'smooth') =>
     requestAnimationFrame(() => {
       const el = scrollerRef.current;
-      if (el) el.scrollTo({ top: pageTops(store.doc.pages, zoom, PAGE_GAP).tops[index] ?? 0, behavior });
+      const box = pageBox(index);
+      if (!el || !box) return;
+      if (scrollDir === 'vertical') el.scrollTo({ top: Math.max(0, box.top - 16), behavior });
+      else el.scrollTo({ left: Math.max(0, box.width < el.clientWidth ? box.left - (el.clientWidth - box.width) / 2 : box.left - 16), behavior });
     });
 
   /** Dispatch a page.added op (one undo step) and scroll to the new page. */
@@ -687,9 +718,14 @@ function EditorInner({
     const index = store.doc.pages.findIndex((p) => p.id === hit.pageId);
     const el = scrollerRef.current;
     if (index < 0 || !el) return;
+    const box = pageBox(index);
+    if (!box) return;
     const y = hit.rects.length ? Math.min(...hit.rects.map((r) => r.y)) : 0;
-    const top = (pageTops(store.doc.pages, zoom, PAGE_GAP).tops[index] ?? 0) + y * zoom - el.clientHeight / 3;
-    el.scrollTo({ top: Math.max(0, top), behavior: 'auto' });
+    const x = hit.rects.length ? Math.min(...hit.rects.map((r) => r.x)) : 0;
+    const top = box.top + y * zoom - el.clientHeight / 3;
+    // Side by side, also bring the page across; stacked, keep the sideways position unless the match is out of view.
+    const left = scrollDir === 'horizontal' || box.left + x * zoom > el.scrollLeft + el.clientWidth - 40 ? box.left + x * zoom - el.clientWidth / 3 : el.scrollLeft;
+    el.scrollTo({ top: Math.max(0, top), left: Math.max(0, left), behavior: 'auto' });
   };
 
   // --- Outline -----------------------------------------------------------------------------
@@ -926,7 +962,8 @@ function EditorInner({
   const onScroll = () => {
     const el = scrollerRef.current;
     if (!el) return;
-    setCurrentPage(pageIndexAt(pageTops(doc.pages, zoom, PAGE_GAP).tops, el.scrollTop + el.clientHeight / 2));
+    const { starts } = pageOffsets(doc.pages, zoom, PAGE_GAP, scrollDir);
+    setCurrentPage(pageIndexAt(starts, scrollDir === 'vertical' ? el.scrollTop + el.clientHeight / 2 : el.scrollLeft + el.clientWidth / 2));
   };
 
   return (
@@ -999,6 +1036,14 @@ function EditorInner({
           </button>
           <button className="icon-btn" onClick={() => setZoomAt(zoom * 1.2)} aria-label="Zoom in">
             <Icon name="plus" />
+          </button>
+          <button
+            className="icon-btn"
+            onClick={toggleScrollDir}
+            aria-label={scrollDir === 'vertical' ? 'Scroll pages sideways' : 'Scroll pages up and down'}
+            title={scrollDir === 'vertical' ? 'Pages scroll up and down (switch to sideways)' : 'Pages scroll sideways (switch to up and down)'}
+          >
+            <Icon name={scrollDir === 'vertical' ? 'scrollVertical' : 'scrollHorizontal'} />
           </button>
           <span className="divider" />
           <button
@@ -1242,7 +1287,7 @@ function EditorInner({
           void insertPhotos(files, e.clientX, e.clientY);
         }}
       >
-        <div className="pages" style={{ gap: PAGE_GAP }}>
+        <div className={`pages ${scrollDir}`} style={{ gap: PAGE_GAP }}>
           {doc.pages.map((page) => (
             <PageView
               key={page.id}

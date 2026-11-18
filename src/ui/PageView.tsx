@@ -272,7 +272,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   // --- Virtualisation: only pages near the viewport own a full-res canvas. ---
   useEffect(() => {
     const el = wrapRef.current!;
-    const io = new IntersectionObserver(([e]) => setVisible(e.isIntersecting), { rootMargin: '100% 0px' });
+    const io = new IntersectionObserver(([e]) => setVisible(e.isIntersecting), { rootMargin: '100% 100%' });
     io.observe(el);
     return () => io.disconnect();
   }, []);

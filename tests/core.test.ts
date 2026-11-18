@@ -6,6 +6,7 @@ import {
   PAGE_H,
   PAGE_W,
   pageIndexAt,
+  pageOffsets,
   pagePaper,
   pageSize,
   pageTops,
@@ -280,5 +281,21 @@ describe('page moves and updates', () => {
     expect(replay(doc, events)).toEqual(live);
     expect(order(live)).toBe('cabd');
     expect(live.pages[0].template).toBe('music');
+  });
+});
+
+describe('page layout direction', () => {
+  // Portrait A4, landscape A5, portrait A4.
+  const pages = [{}, { size: sizeFor('a5', 'landscape') }, {}];
+
+  it('lays pages side by side by their widths', () => {
+    const { starts, length } = pageOffsets(pages, 1, 10, 'horizontal');
+    expect(starts).toEqual([0, 794 + 10, 794 + 10 + 794 + 10]);
+    expect(length).toBe(794 * 3 + 20);
+    expect(pageIndexAt(starts, 900)).toBe(1);
+  });
+
+  it('stacks pages by their heights, as before', () => {
+    expect(pageOffsets(pages, 0.5, 10).starts).toEqual(pageTops(pages, 0.5, 10).tops);
   });
 });
