@@ -773,3 +773,31 @@ button:disabled { cursor: default; opacity: 0.35; }
 }
 /* Dark menus: a faint ring so black and other dark swatches still show. */
 .selection-menu .swatch, .format-bar .swatch { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35); }
+
+/* --- Settings and shortcuts -------------------------------------------------------------- */
+.modal.settings, .modal.shortcuts { width: min(560px, 100%); max-height: calc(100dvh - 32px); overflow: auto; }
+.modal.shortcuts { width: min(760px, 100%); }
+.modal.settings section, .modal.shortcuts section { padding: 8px 0; border-top: 1px solid var(--border); }
+.modal.settings h3, .modal.shortcuts h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 6px 0; }
+.setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 0; cursor: default; }
+.setting-row > span:first-child { display: flex; flex-direction: column; gap: 2px; }
+.setting-label { font-weight: 500; }
+.setting-hint { color: var(--muted); font-size: 12px; margin: 2px 0 4px; }
+.setting-range { display: flex; align-items: center; gap: 8px; }
+.setting-range output { width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
+.switch {
+  appearance: none; width: 40px; height: 24px; border-radius: 12px; background: var(--border); position: relative; flex: none; cursor: pointer;
+  transition: background 0.15s;
+}
+.switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); transition: transform 0.15s; }
+.switch:checked { background: var(--accent); }
+.switch:checked::after { transform: translateX(16px); }
+.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .switch, .switch::after { transition: none; } }
+.shortcut-groups { columns: 2 300px; column-gap: 32px; }
+.shortcut-groups section { break-inside: avoid; }
+.shortcut-groups dl { margin: 0; }
+.shortcut { display: flex; gap: 12px; padding: 4px 0; align-items: baseline; }
+.shortcut dt { flex: 0 0 9.5em; }
+.shortcut dd { margin: 0; color: var(--text); }
+kbd { font: 12px ui-monospace, 'SF Mono', Menlo, monospace; background: var(--surface-2); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; padding: 1px 5px; white-space: pre; }

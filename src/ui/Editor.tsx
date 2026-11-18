@@ -1,5 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { FILL_COLORS, NoFillSwatch } from './ShapeStyle';
+import { SHORTCUTS_KEY, TOOLS } from '../core/shortcuts';
+import { SettingsDialog, ShortcutsSheet } from './Settings';
+import type { EditorSettings, InkToolName } from './settingsStore';
 import { docKind, pageIndexAt, pageOffsets, pageSize, type DashStyle, type EraseMode, type ScrollDirection, type InkTool, type LinkItem, type LinkTarget, type NotebookMeta, type OutlineEntry, type PenStyle, type Template, type ToolKind } from '../core/model';
 import { newId } from '../core/ids';
 import { DocumentStore } from '../core/store';
@@ -89,17 +92,6 @@ const DASH_STYLES: { dash: DashStyle; label: string }[] = [
   { dash: 'dotted', label: 'Dotted line' },
 ];
 const ERASER_SIZES = [6, 12, 22];
-const TOOLS: { kind: ToolKind; label: string; key: string }[] = [
-  { kind: 'pen', label: 'Pen', key: 'P' },
-  { kind: 'highlighter', label: 'Highlighter', key: 'H' },
-  { kind: 'shapes', label: 'Shapes', key: 'S' },
-  { kind: 'eraser', label: 'Eraser', key: 'E' },
-  { kind: 'lasso', label: 'Lasso', key: 'L' },
-  { kind: 'text', label: 'Text', key: 'T' },
-  { kind: 'sticky', label: 'Sticky note', key: 'N' },
-  { kind: 'laser', label: 'Laser pointer', key: 'K' },
-  { kind: 'tape', label: 'Tape', key: 'G' },
-];
 
 interface InkSettings {
   pen: { color: string; width: number; style: PenStyle; sharpness: number; dash: DashStyle; stabilise: number };
@@ -870,6 +862,26 @@ function EditorInner({
 
   // Switching layout keeps the page you were on in view.
   const keepPage = useRef<number | null>(null);
+  // --- Settings and the shortcuts sheet ---------------------------------------------------
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const settingsValues: EditorSettings = {
+    penOnly,
+    scribbleErase,
+    snap,
+    scroll: scrollDir,
+    straightHighlighter: ink.highlighter.straight,
+    stabilise: { pen: normaliseStabilise(ink.pen.stabilise), highlighter: normaliseStabilise(ink.highlighter.stabilise), shapes: normaliseStabilise(ink.shapes.stabilise) },
+  };
+  const changeSettings = (p: Partial<EditorSettings>) => {
+    if (p.penOnly !== undefined) setPenOnly(p.penOnly);
+    if (p.scribbleErase !== undefined) setScribbleErase(p.scribbleErase);
+    if (p.snap !== undefined) setSnap(p.snap);
+    if (p.scroll !== undefined && p.scroll !== scrollDir) toggleScrollDir();
+    if (p.straightHighlighter !== undefined) setHighlighter({ straight: p.straightHighlighter });
+    for (const [t, v] of Object.entries(p.stabilise ?? {})) setStabilise(t as InkToolName, v);
+  };
+
   const toggleScrollDir = () => {
     keepPage.current = currentPage;
     setScrollDir((d) => (d === 'vertical' ? 'horizontal' : 'vertical'));
@@ -1243,6 +1255,8 @@ function EditorInner({
         setSelection(null);
       } else if (e.key === 'Escape') {
         setSelection(null);
+      } else if (!mod && e.key === SHORTCUTS_KEY) {
+        setShortcutsOpen(true);
       } else if (!mod && e.key.toLowerCase() === 'r') {
         toggleRulerRef.current();
       } else if (!mod && e.key.toLowerCase() === 'w') {
@@ -1428,6 +1442,9 @@ function EditorInner({
               </details>
             </>
           )}
+          <button className="icon-btn" onClick={() => setSettingsOpen(true)} aria-label="Settings" title={`Settings (shortcuts: ${SHORTCUTS_KEY})`}>
+            <Icon name="settings" />
+          </button>
           <details className="menu">
             <summary className="icon-btn" aria-label="Export">
               <Icon name="share" />
@@ -1955,6 +1972,8 @@ function EditorInner({
           onRemove={linkDialog.link ? () => saveLink(null) : undefined}
         />
       )}
+      {settingsOpen && <SettingsDialog values={settingsValues} onChange={changeSettings} onClose={() => setSettingsOpen(false)} board={board} />}
+      {shortcutsOpen && <ShortcutsSheet onClose={() => setShortcutsOpen(false)} />}
       <div className="page-indicator" data-no-gesture hidden={!!zoomTarget || board}>
         {currentPage + 1} / {doc.pages.length}
       </div>

@@ -1,0 +1,181 @@
+import { useEffect, useState } from 'react';
+import { forPlatform, SHORTCUT_GROUPS } from '../core/shortcuts';
+import { setTheme, useTheme, type Theme } from './theme';
+import type { EditorSettings, InkToolName } from './settingsStore';
+
+const THEMES: { id: Theme; label: string }[] = [
+  { id: 'system', label: 'System' },
+  { id: 'light', label: 'Light' },
+  { id: 'dark', label: 'Dark' },
+];
+const INK_LABELS: Record<InkToolName, string> = { pen: 'Pen', highlighter: 'Highlighter', shapes: 'Shapes' };
+
+const isMac = () => /Mac|iPhone|iPad/.test(navigator.platform) || /Mac OS/.test(navigator.userAgent);
+
+/** Close on Escape. */
+function useEscape(onClose: () => void) {
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', on);
+    return () => window.removeEventListener('keydown', on);
+  }, [onClose]);
+}
+
+function Toggle({ label, hint, checked, onChange }: { label: string; hint?: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="setting-row">
+      <span>
+        <span className="setting-label">{label}</span>
+        {hint && <span className="setting-hint">{hint}</span>}
+      </span>
+      <input type="checkbox" role="switch" className="switch" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+    </label>
+  );
+}
+
+function Choice<T extends string>({ label, options, value, onChange }: { label: string; options: { id: T; label: string }[]; value: T; onChange: (v: T) => void }) {
+  return (
+    <div className="setting-row">
+      <span className="setting-label">{label}</span>
+      <div className="segmented" role="radiogroup" aria-label={label}>
+        {options.map((o) => (
+          <button type="button" key={o.id} role="radio" aria-checked={value === o.id} className={value === o.id ? 'active' : ''} onClick={() => onChange(o.id)}>
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** How much this browser is storing for the app, and how much it may. */
+function StorageUse() {
+  const [use, setUse] = useState<{ used: number; quota: number; persisted: boolean } | null>(null);
+  useEffect(() => {
+    void Promise.all([navigator.storage?.estimate?.(), navigator.storage?.persisted?.()]).then(([e, persisted]) => {
+      if (e?.usage !== undefined && e.quota) setUse({ used: e.usage, quota: e.quota, persisted: !!persisted });
+    });
+  }, []);
+  if (!use) return null;
+  const mb = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.max(0.1, n / 1e6).toFixed(1)} MB`);
+  return (
+    <p className="setting-hint">
+      Using {mb(use.used)} of the {mb(use.quota)} this browser allows.{' '}
+      {use.persisted ? 'The browser will keep it even when space runs low.' : 'The browser may clear it if space runs very low.'}
+    </p>
+  );
+}
+
+interface Props {
+  values: EditorSettings;
+  onChange: (patch: Partial<EditorSettings>) => void;
+  onClose: () => void;
+  /** Hide settings that a whiteboard has no use for. */
+  board?: boolean;
+}
+
+/** Every preference in one place: appearance, writing, pages, and the keyboard shortcuts. */
+export function SettingsDialog({ values, onChange, onClose, board }: Props) {
+  const theme = useTheme();
+  const [shortcuts, setShortcuts] = useState(false);
+  useEscape(onClose);
+  if (shortcuts) return <ShortcutsSheet onClose={() => setShortcuts(false)} />;
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal settings" role="dialog" aria-label="Settings" onClick={(e) => e.stopPropagation()}>
+        <h2>Settings</h2>
+        <section>
+          <h3>Appearance</h3>
+          <Choice label="Theme" options={THEMES} value={theme} onChange={setTheme} />
+          <p className="setting-hint">On dark paper, dark ink shows lighter on screen; exports keep its real colours.</p>
+        </section>
+        <section>
+          <h3>Writing</h3>
+          <Toggle label="Stylus only" hint="Fingers scroll and zoom; only a stylus draws." checked={values.penOnly} onChange={(penOnly) => onChange({ penOnly })} />
+          <Toggle label="Scribble to erase" hint="Scribbling over ink with the pen rubs it out." checked={values.scribbleErase} onChange={(scribbleErase) => onChange({ scribbleErase })} />
+          <Toggle label="Straight highlighter" hint="The highlighter draws straight lines." checked={values.straightHighlighter} onChange={(straightHighlighter) => onChange({ straightHighlighter })} />
+          {(Object.keys(INK_LABELS) as InkToolName[]).map((t) => (
+            <label key={t} className="setting-row">
+              <span className="setting-label">{INK_LABELS[t]} stabilisation</span>
+              <span className="setting-range">
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={5}
+                  value={Math.round(values.stabilise[t] * 100)}
+                  aria-label={`${INK_LABELS[t]} stabilisation`}
+                  onChange={(e) => onChange({ stabilise: { ...values.stabilise, [t]: Number(e.target.value) / 100 } })}
+                />
+                <output>{Math.round(values.stabilise[t] * 100)}%</output>
+              </span>
+            </label>
+          ))}
+        </section>
+        <section>
+          <h3>Objects and pages</h3>
+          <Toggle label="Snap when moving" hint="Selections line up with other objects, the page and its lines." checked={values.snap} onChange={(snap) => onChange({ snap })} />
+          {!board && (
+            <Choice
+              label="Pages scroll"
+              options={[
+                { id: 'vertical', label: 'Up and down' },
+                { id: 'horizontal', label: 'Sideways' },
+              ]}
+              value={values.scroll}
+              onChange={(scroll) => onChange({ scroll })}
+            />
+          )}
+        </section>
+        <section>
+          <h3>Storage</h3>
+          <p className="setting-hint">Everything is kept on this device, in this browser.</p>
+          <StorageUse />
+        </section>
+        <div className="modal-actions">
+          <button type="button" className="btn ghost" onClick={() => setShortcuts(true)}>
+            Keyboard shortcuts
+          </button>
+          <button type="button" className="btn primary" onClick={onClose}>
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Every keyboard shortcut, grouped, with keys shown for this platform. */
+export function ShortcutsSheet({ onClose }: { onClose: () => void }) {
+  useEscape(onClose);
+  const mac = isMac();
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal shortcuts" role="dialog" aria-label="Keyboard shortcuts" onClick={(e) => e.stopPropagation()}>
+        <h2>Keyboard shortcuts</h2>
+        <div className="shortcut-groups">
+          {SHORTCUT_GROUPS.map((g) => (
+            <section key={g.title}>
+              <h3>{g.title}</h3>
+              <dl>
+                {g.items.map((s) => (
+                  <div key={s.keys + s.does} className="shortcut">
+                    <dt>
+                      <kbd>{forPlatform(s.keys, mac)}</kbd>
+                    </dt>
+                    <dd>{s.does}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          ))}
+        </div>
+        <div className="modal-actions">
+          <button type="button" className="btn primary" onClick={onClose}>
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

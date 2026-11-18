@@ -17,6 +17,8 @@ import { pagesFromFiles, titleFromFileName } from '../io/importPages';
 import { Icon } from './icons';
 import { whiteboardPage } from '../core/whiteboard';
 import { EMPTY_TEXT_DOC } from '../core/textDoc';
+import { SettingsDialog } from './Settings';
+import { storedSettings, storeSettings, type EditorSettings } from './settingsStore';
 
 const KIND_LABELS: Record<KindFilter, string> = { all: 'Everything', notebook: 'Notebooks', whiteboard: 'Whiteboards', text: 'Documents' };
 
@@ -89,6 +91,7 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
       return next;
     });
   const [creating, setCreating] = useState(false);
+  const [settings, setSettings] = useState<EditorSettings | null>(null);
   const [query, setQuery] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -267,6 +270,9 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
           <h1>Notebooks</h1>
         </div>
         <div className="lib-actions">
+          <button className="icon-btn" onClick={() => setSettings(storedSettings())} aria-label="Settings" title="Settings">
+            <Icon name="settings" />
+          </button>
           <input className="search" placeholder="Search titles" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search notebooks" />
           <button className="btn ghost" onClick={() => fileInput.current?.click()} disabled={importing} title="Import a J Notes notebook, a PDF, or images">
             {importing ? 'Importing…' : 'Import'}
@@ -454,6 +460,16 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
         </ul>
       )}
 
+      {settings && (
+        <SettingsDialog
+          values={settings}
+          onChange={(p) => {
+            storeSettings(p);
+            setSettings({ ...settings, ...p });
+          }}
+          onClose={() => setSettings(null)}
+        />
+      )}
       {creating && <NewNotebookDialog onCancel={() => setCreating(false)} onCreate={create} />}
       {editing && (
         <EditNotebookDialog
