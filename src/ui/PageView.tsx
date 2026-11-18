@@ -26,6 +26,7 @@ import { newTape, tapeAt, tapeRect } from '../core/tape';
 import { isScribble, scribbledStrokes } from '../core/scribble';
 import { inkKind, type InkKind } from '../core/contentKinds';
 import { CropOverlay } from './CropOverlay';
+import { animatedResolver, ensureGif, gifFrameIndex, isAnimated, isStatic } from '../render/gifs';
 import { screenshotRect, type Rect } from '../core/screenshot';
 import { cropPatch, flipPatch } from '../core/imageEdit';
 import { canRotate, itemRotation } from '../core/items';
@@ -300,7 +301,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     paintPage(canvas, pageRef.current, scale, dpr, {
       hidden: hidden.current ?? undefined,
       replace: replaced.current ?? undefined,
-      items: { images, hidden: hiddenItems.current ?? undefined, override: itemOverride.current ?? undefined, revealed },
+      items: { images: animatedResolver(store.doc.id, images, performance.now()), hidden: hiddenItems.current ?? undefined, override: itemOverride.current ?? undefined, revealed },
       pdf: pdfResolver(store.doc.id),
       fade: playbackRef.current ? (s) => playbackState(s, playbackRef.current!.rec, playbackRef.current!.t) === 'ahead' : undefined,
     });
@@ -309,6 +310,32 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       clearLive();
     }
   };
+
+  // Animated GIFs: find out which photos are, then repaint whenever one of them moves to a new frame.
+  // Off-screen pages don't animate, and nothing does for people who ask for reduced motion.
+  const imageBlobs = page.items.flatMap((it) => (it.kind === 'image' ? [it.blobId] : [])).join(' ');
+  useEffect(() => {
+    if (!visible || !imageBlobs) return;
+    const docId = store.doc.id;
+    const ids = imageBlobs.split(' ');
+    for (const id of ids) ensureGif(docId, id);
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    let last = '';
+    let timer = 0;
+    const tick = () => {
+      const now = performance.now();
+      const shown = ids.map((id) => gifFrameIndex(docId, id, now)).join(',');
+      if (ids.some((id) => isAnimated(docId, id)) && shown !== last) {
+        last = shown;
+        renderBase();
+      }
+      if (ids.every((id) => isStatic(docId, id))) return; // nothing here moves
+      timer = window.setTimeout(tick, 20);
+    };
+    tick();
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, imageBlobs, store, zoom, dpr]);
 
   // Re-render committed layer on content change immediately, on zoom change debounced
   // (the CSS-stretched old bitmap covers the gap, like a tile cache would).

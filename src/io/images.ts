@@ -16,7 +16,8 @@ export const isImageFile = (f: File) => f.type.startsWith('image/');
 
 /**
  * Decode an image file, downscaling very large ones so notebooks stay small.
- * PNGs stay PNG (they may be transparent); other formats are re-encoded as JPEG when downscaled.
+ * PNGs stay PNG (they may be transparent) and GIFs are never touched (they may be animated);
+ * other formats are re-encoded as JPEG when downscaled.
  */
 export async function prepareImage(file: Blob): Promise<PreparedImage> {
   const img = await decodeImage(file);
@@ -24,7 +25,8 @@ export async function prepareImage(file: Blob): Promise<PreparedImage> {
   const height = img.naturalHeight || img.height;
   if (!width || !height) throw new Error('This image has no size');
   const k = MAX_SIDE / Math.max(width, height);
-  if (k >= 1) return { type: file.type || 'image/png', bytes: await file.arrayBuffer(), img, width, height };
+  // GIFs are kept as they are: re-encoding would lose the animation.
+  if (k >= 1 || file.type === 'image/gif') return { type: file.type || 'image/png', bytes: await file.arrayBuffer(), img, width, height };
 
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(width * k);
