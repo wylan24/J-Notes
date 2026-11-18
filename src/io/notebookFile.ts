@@ -1,4 +1,5 @@
-import { normalizeDoc, type NotebookDoc, type NotebookMeta, type OutlineEntry, type Template } from '../core/model';
+import { textDocBlobIds } from '../core/textDoc';
+import { normalizeDoc, type DocKind, type NotebookDoc, type NotebookMeta, type OutlineEntry, type Template } from '../core/model';
 import { normaliseLevels } from '../core/outline';
 import { newId } from '../core/ids';
 import { isCoverDataUrl } from '../core/cover';
@@ -17,6 +18,8 @@ export interface NotebookFile {
   cover: string;
   /** Custom cover picture (data URL); absent when the notebook has none. */
   coverImage?: string;
+  /** A whiteboard or text document; absent for a notebook. */
+  kind?: DocKind;
   template: Template;
   doc: NotebookDoc;
   blobs?: Record<string, string>;
@@ -30,6 +33,7 @@ export function referencedBlobIds(doc: NotebookDoc): string[] {
     if (page.background) ids.add(page.background.blobId);
   }
   for (const r of doc.recordings ?? []) ids.add(r.blobId);
+  for (const id of textDocBlobIds(doc.text)) ids.add(id);
   return [...ids];
 }
 
@@ -45,6 +49,7 @@ export function toFile(meta: NotebookMeta, doc: NotebookDoc, blobs: Pick<StoredB
     cover: meta.cover,
     ...(meta.coverImage ? { coverImage: meta.coverImage } : {}),
     template: meta.template,
+    ...(meta.kind && meta.kind !== 'notebook' ? { kind: meta.kind } : {}),
     doc,
     blobs: embedded,
   };
@@ -72,10 +77,12 @@ export function fromFile(raw: unknown): { meta: NotebookMeta; doc: NotebookDoc; 
       ...(Array.isArray(f.doc.recordings) ? { recordings: f.doc.recordings } : {}),
       ...(Array.isArray(f.doc.bookmarks) && f.doc.bookmarks.length ? { bookmarks: f.doc.bookmarks.filter((b) => typeof b === 'string') } : {}),
       ...outlineFrom(f.doc.outline),
+      ...(f.doc.text && typeof f.doc.text === 'object' && f.doc.text.type === 'doc' ? { text: f.doc.text } : {}),
     }),
     blobs,
     meta: {
       id,
+      ...(f.kind === 'whiteboard' || f.kind === 'text' ? { kind: f.kind } : {}),
       title: String(f.title || 'Imported notebook'),
       cover: f.cover || '#3d5a80',
       // Only a picture we could have made; anything else is dropped rather than shown.

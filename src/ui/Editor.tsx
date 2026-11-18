@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { FILL_COLORS, NoFillSwatch } from './ShapeStyle';
 import { docKind, pageIndexAt, pageOffsets, pageSize, type DashStyle, type EraseMode, type ScrollDirection, type InkTool, type LinkItem, type LinkTarget, type NotebookMeta, type OutlineEntry, type PenStyle, type Template, type ToolKind } from '../core/model';
 import { newId } from '../core/ids';
@@ -179,8 +179,17 @@ export function Editor({ id, onExit }: { id: string; onExit: () => void }) {
         }}
       />
     );
+  // Text documents have their own editor, loaded when one is first opened.
+  if (docKind(state.meta) === 'text')
+    return (
+      <Suspense fallback={<div className="center-msg">Opening…</div>}>
+        <TextDocument key={id} {...state} onExit={onExit} />
+      </Suspense>
+    );
   return <EditorInner key={id} {...state} onExit={onExit} />;
 }
+
+const TextDocument = lazy(() => import('./TextDocument'));
 
 function EditorInner({
   store,

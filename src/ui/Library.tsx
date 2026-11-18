@@ -16,6 +16,7 @@ import { editorClosed, sweepQuicknotes } from '../storage/quicknotes';
 import { pagesFromFiles, titleFromFileName } from '../io/importPages';
 import { Icon } from './icons';
 import { whiteboardPage } from '../core/whiteboard';
+import { EMPTY_TEXT_DOC } from '../core/textDoc';
 
 const KIND_LABELS: Record<KindFilter, string> = { all: 'Everything', notebook: 'Notebooks', whiteboard: 'Whiteboards', text: 'Documents' };
 
@@ -117,6 +118,17 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
     await createNotebook(
       { id, kind: 'whiteboard', title: 'Untitled whiteboard', cover: COVERS[0], template: 'dotted', createdAt: now, updatedAt: now, favourite: false, trashedAt: null, pageCount: 1, ...fileHere },
       { id, pages: [whiteboardPage(newId())] },
+    );
+    onOpen(id);
+  };
+
+  /** A new text document, straight into its editor. */
+  const newTextDoc = async () => {
+    const id = newId();
+    const now = Date.now();
+    await createNotebook(
+      { id, kind: 'text', title: 'Untitled document', cover: COVERS[0], template: 'blank', createdAt: now, updatedAt: now, favourite: false, trashedAt: null, pageCount: 0, ...fileHere },
+      { id, pages: [], text: EMPTY_TEXT_DOC },
     );
     onOpen(id);
   };
@@ -278,6 +290,9 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
           )}
           <button className="btn ghost" onClick={() => void quicknote()} title="A blank notebook, discarded if you leave it empty">
             <Icon name="pencil" /> Quick note
+          </button>
+          <button className="btn ghost" onClick={() => void newTextDoc()} title="A typed document with headings, lists, checklists, tables and pictures">
+            <Icon name="plus" /> Document
           </button>
           <button className="btn ghost" onClick={() => void newWhiteboard()} title="One endless page for diagrams and brainstorming">
             <Icon name="plus" /> Whiteboard

@@ -365,6 +365,20 @@ export interface NotebookDoc {
   bookmarks?: string[];
   /** The notebook's outline, in reading order. Absent when it has none. */
   outline?: OutlineEntry[];
+  /**
+   * A text document's content, as the editor's document (ProseMirror JSON). Images in it refer to
+   * the blob store by `blobId`. Absent for notebooks and whiteboards.
+   */
+  text?: TextDocNode;
+}
+
+/** A node of a text document, as ProseMirror JSON. */
+export interface TextDocNode {
+  type: string;
+  attrs?: Record<string, unknown>;
+  content?: TextDocNode[];
+  text?: string;
+  marks?: { type: string; attrs?: Record<string, unknown> }[];
 }
 
 /**
@@ -382,7 +396,7 @@ export interface OutlineEntry {
 }
 
 /** Notebook-level fields a `doc.updated` op can change. An undefined value means the field is absent. */
-export type DocPatch = Partial<Pick<NotebookDoc, 'bookmarks' | 'outline'>>;
+export type DocPatch = Partial<Pick<NotebookDoc, 'bookmarks' | 'outline' | 'text'>>;
 
 /**
  * What a document is: a notebook of pages, a whiteboard (one very large page), or a typed text

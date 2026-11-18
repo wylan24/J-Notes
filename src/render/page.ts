@@ -207,6 +207,33 @@ export function renderBoardThumbnail(page: Page, docId: string, w = 240, h = Mat
   return canvas.toDataURL('image/png');
 }
 
+/** A text document's library thumbnail: its first lines on a white sheet, the shape of a notebook cover. */
+export function renderTextThumbnail(lines: readonly { text: string; heading: number }[], w = 240, h = Math.round((240 * 1123) / 794)): string {
+  const canvas = document.createElement('canvas');
+  canvas.width = w * 2;
+  canvas.height = h * 2;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return '';
+  ctx.scale(2, 2);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, w, h);
+  const pad = 18;
+  let y = pad;
+  for (const line of lines) {
+    const size = line.heading === 1 ? 15 : line.heading === 2 ? 12.5 : line.heading === 3 ? 11 : 9;
+    ctx.font = `${line.heading ? '700 ' : ''}${size}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
+    ctx.fillStyle = line.heading ? '#1d1d1f' : '#4a4a4f';
+    // One line each, cut to the sheet's width.
+    let text = line.text;
+    while (text && ctx.measureText(text).width > w - 2 * pad) text = text.slice(0, -2);
+    y += size * 1.45;
+    if (y > h - pad) break;
+    ctx.fillText(text !== line.text ? `${text}…` : text, pad, y);
+    if (line.heading) y += 3;
+  }
+  return canvas.toDataURL('image/png');
+}
+
 /** A notebook's page as a PNG data URL, `width` CSS px wide, with its photos and PDF background as loaded so far. */
 export function renderThumbnail(page: Page, docId: string, width = 240): string {
   const canvas = document.createElement('canvas');
