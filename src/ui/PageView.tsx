@@ -100,6 +100,8 @@ interface Props {
   stickyColors: string[];
   /** Save the lasso selection to the elements library. */
   onSaveElement?: (sel: Selection) => void;
+  /** Copy the selection to the clipboard, removing it with `cut`. */
+  onCopy?: (sel: Selection, cut: boolean) => void;
   /** Add the selection's area to the notebook's outline. */
   onAddToOutline?: (sel: Selection) => void;
   /** Go where a tapped link points. */
@@ -216,7 +218,7 @@ type Active =
   | { kind: 'laser'; pointerId: number; cursor: Vec }
   | { kind: 'tape'; pointerId: number; start: Vec; cur: Vec };
 
-export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, onAddToOutline, onFollowLink, onEditLink, readOnly, onLaser, onSample, revealed, onToggleTape, onScribbleErase, playback, onSeekInk, highlights }: Props) {
+export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, onCopy, onAddToOutline, onFollowLink, onEditLink, readOnly, onLaser, onSample, revealed, onToggleTape, onScribbleErase, playback, onSeekInk, highlights }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const baseRef = useRef<HTMLCanvasElement>(null);
   const liveRef = useRef<HTMLCanvasElement>(null);
@@ -1113,6 +1115,12 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
             >
               {(soleItem?.kind === 'text' || (soleItem?.kind === 'sticky' && !soleItem.collapsed)) && <button onClick={editSoleItem}>Edit</button>}
               <button onClick={deleteSelection}>Delete</button>
+              {onCopy && selected && (
+                <>
+                  <button onClick={() => onCopy(selected, true)}>Cut</button>
+                  <button onClick={() => onCopy(selected, false)}>Copy</button>
+                </>
+              )}
               <button onClick={duplicateSelection}>Duplicate</button>
               {onSaveElement && selected && <button onClick={() => onSaveElement(selected)}>Save as element</button>}
               {onAddToOutline && selected && <button onClick={() => onAddToOutline(selected)}>Add to outline</button>}

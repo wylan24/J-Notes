@@ -10,7 +10,7 @@ import { afterEditorClose, settleQuicknote, settleQuicknoteById } from '../stora
 import { isUnlocked, markUnlocked } from '../core/lock';
 import { LockScreen } from './Lock';
 import { movePageOp, removeItemsOp, updateItemOp } from '../core/ops';
-import { LINK_PAD, LINK_TEXT_SIZE, linkLabel, newLink, pastedUrl, pushBack, type BackEntry } from '../core/links';
+import { LINK_PAD, LINK_TEXT_SIZE, linkLabel, newLink, pushBack, type BackEntry } from '../core/links';
 import { LinkDialog } from './LinkDialog';
 import { usePresenter } from './usePresenter';
 import { TabsBar } from './TabsBar';
@@ -49,6 +49,8 @@ import { recordingSupported, stopRecording, useRecorderState } from './recorder'
 import type { Recording } from '../core/model';
 import { defaultElementName, elementBlobIds, makeElementContent, placeElement, type SavedElement } from '../core/elements';
 import { RulerOverlay } from './Ruler';
+import { pastedFromEvent, readPasted, writeClip, writeClipToEvent, type Pasted } from './clipboard';
+import type { Clip, ClipBlob } from '../core/clipboard';
 import { ZoomWindow } from './ZoomWindow';
 import { rulerEdges, type Ruler } from '../core/ruler';
 import { defaultTarget, type ZoomTarget } from '../core/zoomWindow';
@@ -655,26 +657,119 @@ function EditorInner({
   const pasteLinkRef = useRef(pasteLink);
   pasteLinkRef.current = pasteLink;
 
+  // --- Cut, copy and paste ------------------------------------------------------------
+  // Copy events must fill the clipboard synchronously, so the selected photos' bytes are fetched
+  // as soon as something is selected.
+  const clipBlobs = useRef(new Map<string, ClipBlob>());
   useEffect(() => {
-    const onPaste = (e: ClipboardEvent) => {
-      if (readOnlyRef.current) return;
-      const t = e.target;
-      if (t instanceof HTMLTextAreaElement || t instanceof HTMLInputElement) return;
-      const files = [...(e.clipboardData?.files ?? [])].filter(isImageFile);
-      if (files.length) {
-        e.preventDefault();
-        void insertPhotosRef.current(files);
+    const page = selection && store.doc.pages.find((p) => p.id === selection.pageId);
+    const content = page && makeElementContent(page, selection);
+    const missing = content ? elementBlobIds(content).filter((id) => !clipBlobs.current.has(id)) : [];
+    if (!missing.length) return;
+    void getBlobs(store.doc.id, missing).then((blobs) => {
+      for (const { id, type, bytes } of blobs) clipBlobs.current.set(id, { id, type, bytes });
+    });
+  }, [selection, store]);
+
+  /** The selection as a clip, fetching any photo bytes not yet fetched. */
+  const clipOf = async (sel: Selection): Promise<Clip | null> => {
+    const page = store.doc.pages.find((p) => p.id === sel.pageId);
+    const content = page && makeElementContent(page, sel);
+    if (!content) return null;
+    const ids = elementBlobIds(content).filter((id) => !clipBlobs.current.has(id));
+    if (ids.length) for (const { id, type, bytes } of await getBlobs(store.doc.id, ids)) clipBlobs.current.set(id, { id, type, bytes });
+    return { content, blobs: elementBlobIds(content).flatMap((id) => clipBlobs.current.get(id) ?? []) };
+  };
+  /** The same, now or never: null if a photo's bytes haven't been fetched yet. */
+  const clipOfSync = (sel: Selection): Clip | null => {
+    const page = store.doc.pages.find((p) => p.id === sel.pageId);
+    const content = page && makeElementContent(page, sel);
+    if (!content) return null;
+    const ids = elementBlobIds(content);
+    return ids.every((id) => clipBlobs.current.has(id)) ? { content, blobs: ids.map((id) => clipBlobs.current.get(id)!) } : null;
+  };
+
+  const removeSelection = (sel: Selection) => {
+    const page = store.doc.pages.find((p) => p.id === sel.pageId);
+    if (page) store.dispatch(deleteSelectionOps(page, sel));
+    setSelection(null);
+  };
+
+  /** Copy (or cut) from the selection menu. */
+  const copySelection = async (sel: Selection, cut: boolean) => {
+    const clip = await clipOf(sel);
+    if (!clip) return;
+    if (!(await writeClip(clip, imageResolver(store.doc.id)))) {
+      setNotice('Could not reach the clipboard; Paste in this tab still works');
+    } else {
+      setNotice(cut ? 'Cut' : 'Copied');
+    }
+    if (cut) removeSelection(sel);
+  };
+
+  /** Paste a clip centred in view, as a new selection. Its photos are copied into this notebook first. */
+  const pasteClip = async (clip: Clip) => {
+    const target = photoTarget();
+    if (!target) return;
+    try {
+      for (const b of clip.blobs) await putBlob({ docId: store.doc.id, ...b });
+    } catch (e) {
+      alert(`Could not paste the photos: ${(e as Error).message}`);
+      return;
+    }
+    const placed = placeElement(clip.content, target.pageId, target, pageSize(store.doc.pages.find((p) => p.id === target.pageId) ?? {}));
+    if (!placed.ops.length) return;
+    store.dispatch(placed.ops);
+    setToolKind('lasso');
+    setSelection(placed.selection);
+  };
+
+  const applyPasted = (p: Pasted) => {
+    if (p.kind === 'clip') void pasteClip(p.clip);
+    else if (p.kind === 'images') void insertPhotosRef.current(p.files);
+    else pasteLinkRef.current(p.url);
+  };
+  const pasteFromButton = async () => {
+    const p = await readPasted();
+    if (p) applyPasted(p);
+    else setNotice('Nothing to paste');
+  };
+
+  const clipRef = useRef({ selection, clipOfSync, copySelection, removeSelection, applyPasted });
+  clipRef.current = { selection, clipOfSync, copySelection, removeSelection, applyPasted };
+
+  useEffect(() => {
+    const editing = (t: EventTarget | null) => t instanceof HTMLTextAreaElement || t instanceof HTMLInputElement || (t instanceof HTMLElement && t.isContentEditable);
+    const onCopyOrCut = (e: ClipboardEvent) => {
+      const { selection: sel, clipOfSync, copySelection, removeSelection } = clipRef.current;
+      const cut = e.type === 'cut';
+      if (!sel || editing(e.target) || (cut && readOnlyRef.current)) return;
+      // Ignore a copy of ordinary page text the person has highlighted.
+      if (!document.getSelection()?.isCollapsed && document.getSelection()?.toString()) return;
+      const clip = clipOfSync(sel);
+      if (clip && writeClipToEvent(e, clip, imageResolver(store.doc.id))) {
+        if (cut) removeSelection(sel);
         return;
       }
-      const url = pastedUrl(e.clipboardData?.getData('text/plain') ?? '');
-      if (url) {
-        e.preventDefault();
-        pasteLinkRef.current(url);
-      }
+      e.preventDefault();
+      void copySelection(sel, cut);
     };
+    const onPaste = (e: ClipboardEvent) => {
+      if (readOnlyRef.current || editing(e.target)) return;
+      const p = pastedFromEvent(e);
+      if (!p) return;
+      e.preventDefault();
+      clipRef.current.applyPasted(p);
+    };
+    window.addEventListener('copy', onCopyOrCut);
+    window.addEventListener('cut', onCopyOrCut);
     window.addEventListener('paste', onPaste);
-    return () => window.removeEventListener('paste', onPaste);
-  }, []);
+    return () => {
+      window.removeEventListener('copy', onCopyOrCut);
+      window.removeEventListener('cut', onCopyOrCut);
+      window.removeEventListener('paste', onPaste);
+    };
+  }, [store]);
 
   // --- Page actions -------------------------------------------------------------------
   // Dialogs name their page by id, so a reorder while one is open can't retarget it.
@@ -1421,6 +1516,10 @@ function EditorInner({
             ))}
           {toolKind === 'lasso' && (
             <>
+              <button className="chip" onClick={() => void pasteFromButton()} title="Paste (⌘V): ink, text and photos copied here or in another notebook, or a photo or web address">
+                Paste
+              </button>
+              <span className="divider" />
               <div className="segmented" role="radiogroup" aria-label="Lasso shape">
                 {(['freehand', 'rect'] as LassoShape[]).map((m) => (
                   <button key={m} role="radio" aria-checked={lasso.shape === m} className={lasso.shape === m ? 'active' : ''} onClick={() => setLasso({ ...lasso, shape: m })}>
@@ -1590,6 +1689,7 @@ function EditorInner({
               stickyColors={STICKY_COLORS}
               rulerEdges={ruler ? rulerEdgesClient : undefined}
               onSaveElement={(sel) => void saveAsElement(sel)}
+              onCopy={(sel, cut) => void copySelection(sel, cut)}
               onAddToOutline={addSelectionToOutline}
               onScribbleErase={(n) => setNotice(`Scribbled out ${n} ${n === 1 ? 'stroke' : 'strokes'} · Undo brings ${n === 1 ? 'it' : 'them'} back`)}
               revealed={revealed}
