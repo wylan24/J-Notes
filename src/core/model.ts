@@ -36,6 +36,8 @@ export const DEFAULT_PAPER: Paper = 'white';
 export type InkTool = 'pen' | 'highlighter';
 export type ToolKind = InkTool | 'shapes' | 'text' | 'sticky' | 'eraser' | 'lasso' | 'laser';
 export type PenStyle = 'fountain' | 'ball' | 'brush' | 'pencil';
+/** Line style of a pen or shape stroke. Absent on a stroke means solid. */
+export type DashStyle = 'solid' | 'dashed' | 'dotted';
 export type EraseMode = 'stroke' | 'partial';
 export type Template = 'blank' | 'ruled' | 'grid' | 'dotted' | 'legal' | 'cornell' | 'music' | 'planner';
 
@@ -62,6 +64,8 @@ export interface Stroke {
   sharpness?: number;
   /** Made by shape recognition. Rendered without input smoothing so corners stay sharp. */
   shape?: boolean;
+  /** Dashed or dotted; absent for a solid line. */
+  dash?: Exclude<DashStyle, 'solid'>;
   /** The recording this stroke was written during; its points' `t` are times into that recording. */
   rec?: string;
 }

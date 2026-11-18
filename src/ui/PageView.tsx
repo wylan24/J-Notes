@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } f
 import {
   pagePaper,
   pageSize,
+  type DashStyle,
   type EraseMode,
   type InputPoint,
   type LinkItem,
@@ -50,6 +51,8 @@ export interface ToolState {
   penStyle: PenStyle;
   /** Fountain-pen tip sharpness, 0..1. */
   sharpness: number;
+  /** Line style for the pen and Shapes tools. */
+  dash: DashStyle;
   /** Highlighter draws ruler-straight lines from the first point. */
   straight: boolean;
   /** Eraser radius in screen px, independent of zoom. */

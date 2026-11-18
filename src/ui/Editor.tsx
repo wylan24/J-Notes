@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { pageIndexAt, pageOffsets, pageSize, type EraseMode, type ScrollDirection, type InkTool, type LinkItem, type LinkTarget, type NotebookMeta, type OutlineEntry, type PenStyle, type Template, type ToolKind } from '../core/model';
+import { pageIndexAt, pageOffsets, pageSize, type DashStyle, type EraseMode, type ScrollDirection, type InkTool, type LinkItem, type LinkTarget, type NotebookMeta, type OutlineEntry, type PenStyle, type Template, type ToolKind } from '../core/model';
 import { newId } from '../core/ids';
 import { DocumentStore } from '../core/store';
 import { deleteSelectionOps, selectionBounds } from '../core/selection';
@@ -66,6 +66,11 @@ const PEN_STYLES: { style: PenStyle; label: string }[] = [
   { style: 'brush', label: 'Brush pen' },
   { style: 'pencil', label: 'Pencil' },
 ];
+const DASH_STYLES: { dash: DashStyle; label: string }[] = [
+  { dash: 'solid', label: 'Solid line' },
+  { dash: 'dashed', label: 'Dashed line' },
+  { dash: 'dotted', label: 'Dotted line' },
+];
 const ERASER_SIZES = [6, 12, 22];
 const TOOLS: { kind: ToolKind; label: string; key: string }[] = [
   { kind: 'pen', label: 'Pen', key: 'P' },
@@ -79,9 +84,9 @@ const TOOLS: { kind: ToolKind; label: string; key: string }[] = [
 ];
 
 interface InkSettings {
-  pen: { color: string; width: number; style: PenStyle; sharpness: number };
+  pen: { color: string; width: number; style: PenStyle; sharpness: number; dash: DashStyle };
   highlighter: { color: string; width: number; straight: boolean };
-  shapes: { color: string; width: number };
+  shapes: { color: string; width: number; dash: DashStyle };
 }
 interface EraserSettings {
   size: number;
@@ -90,9 +95,9 @@ interface EraserSettings {
 }
 
 const DEFAULT_INK: InkSettings = {
-  pen: { color: PEN_COLORS[0], width: WIDTHS.pen[1], style: 'fountain', sharpness: 0.5 },
+  pen: { color: PEN_COLORS[0], width: WIDTHS.pen[1], style: 'fountain', sharpness: 0.5, dash: 'solid' },
   highlighter: { color: HIGHLIGHT_COLORS[0], width: WIDTHS.highlighter[1], straight: false },
-  shapes: { color: PEN_COLORS[0], width: WIDTHS.shapes[1] },
+  shapes: { color: PEN_COLORS[0], width: WIDTHS.shapes[1], dash: 'solid' },
 };
 const DEFAULT_ERASER: EraserSettings = { size: ERASER_SIZES[1], mode: 'stroke', highlighterOnly: false };
 
@@ -199,6 +204,7 @@ function EditorInner({
   const setPen = (patch: Partial<InkSettings['pen']>) => setInk((v) => ({ ...v, pen: { ...v.pen, ...patch } }));
   const setHighlighter = (patch: Partial<InkSettings['highlighter']>) => setInk((v) => ({ ...v, highlighter: { ...v.highlighter, ...patch } }));
   const setInkTool = (t: ColorTool, patch: { color?: string; width?: number }) => setInk((v) => ({ ...v, [t]: { ...v[t], ...patch } }));
+  const setDash = (t: 'pen' | 'shapes', dash: DashStyle) => setInk((v) => ({ ...v, [t]: { ...v[t], dash } }));
   const [penOnly, setPenOnly] = useState(() => readPref('jnotes.penOnly', false));
   const [textStyle, setTextStyle] = useState<TextStyle>(() => ({ ...DEFAULT_TEXT, ...readPref<Partial<TextStyle>>('jnotes.text', {}) }));
   const [stickyColor, setStickyColor] = useState(() => readPref('jnotes.stickyColor', STICKY_COLORS[0]));
@@ -397,6 +403,7 @@ function EditorInner({
     width: inkTool ? ink[inkTool].width : 1,
     penStyle: ink.pen.style,
     sharpness: ink.pen.sharpness,
+    dash: inkTool === 'pen' || inkTool === 'shapes' ? ink[inkTool].dash : 'solid',
     straight: ink.highlighter.straight,
     eraserPx: eraser.size,
     eraseMode: eraser.mode,
@@ -1220,6 +1227,23 @@ function EditorInner({
                   />
                 </label>
               )}
+            </>
+          )}
+          {(inkTool === 'shapes' || (inkTool === 'pen' && ink.pen.style !== 'pencil')) && (
+            <>
+              <span className="divider" />
+              {DASH_STYLES.map(({ dash, label }) => (
+                <button
+                  key={dash}
+                  className={`icon-btn sm ${ink[inkTool].dash === dash ? 'active' : ''}`}
+                  aria-pressed={ink[inkTool].dash === dash}
+                  aria-label={label}
+                  title={label}
+                  onClick={() => setDash(inkTool, dash)}
+                >
+                  <Icon name={`line-${dash}`} />
+                </button>
+              ))}
             </>
           )}
           {inkTool && (

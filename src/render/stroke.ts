@@ -1,10 +1,11 @@
 import { getStroke, type StrokeOptions } from 'perfect-freehand';
 import type { InputPoint, Stroke } from '../core/model';
 import { dabsByLevel, pencilAlpha, pencilDabs, type Dab } from '../core/pencil';
+import { dashLengths, dotCentres, dotPolygon, dotSpacing, splitDashes } from '../core/dash';
 
 export const HIGHLIGHTER_ALPHA = 0.38;
 
-type InkStyle = Pick<Stroke, 'tool' | 'width' | 'simulatePressure' | 'penStyle' | 'sharpness' | 'shape'>;
+type InkStyle = Pick<Stroke, 'tool' | 'width' | 'simulatePressure' | 'penStyle' | 'sharpness' | 'shape' | 'dash'>;
 
 const easeOut = (t: number) => Math.sin((t * Math.PI) / 2);
 
@@ -69,8 +70,25 @@ export function strokeOutline(points: InputPoint[], style: InkStyle, complete: b
   return getStroke(input, options);
 }
 
+/**
+ * The filled shapes a stroke is drawn as: one outline for a solid line, one per dash, or one per dot.
+ * Dashes keep the pen's look (each is a short stroke with the same nib); dots are round.
+ */
+export function strokeOutlines(points: InputPoint[], style: InkStyle, complete: boolean): number[][][] {
+  if (!style.dash || style.tool !== 'pen') return [strokeOutline(points, style, complete)];
+  if (style.dash === 'dotted') return dotCentres(points, dotSpacing(style.width)).map((c) => dotPolygon(c, style.width * (0.45 + 0.15 * c.p)));
+  const { on, off } = dashLengths(style.width);
+  // Each dash is drawn from the pressure already recorded, rather than re-simulated over its short length.
+  const piece = { ...style, simulatePressure: false };
+  return splitDashes(points, on, off).map((seg) => strokeOutline(seg, piece, true));
+}
+
 export function buildStrokePath(points: InputPoint[], style: InkStyle, complete: boolean): Path2D {
-  return outlineToPath(strokeOutline(points, style, complete));
+  const outlines = strokeOutlines(points, style, complete);
+  if (outlines.length === 1) return outlineToPath(outlines[0]);
+  const path = new Path2D();
+  for (const o of outlines) path.addPath(outlineToPath(o));
+  return path;
 }
 
 /**
@@ -78,16 +96,19 @@ export function buildStrokePath(points: InputPoint[], style: InkStyle, complete:
  * for vector export. Empty for a stroke with no outline.
  */
 export function strokeSvgPath(s: Stroke): string {
-  const o = strokeOutline(s.points, s, true);
-  if (!o.length) return '';
   const f = (n: number) => Math.round(n * 100) / 100;
-  let d = `M${f(o[0][0])} ${f(o[0][1])}`;
-  for (let i = 1; i < o.length; i++) {
-    const [x0, y0] = o[i - 1];
-    const [x1, y1] = o[i];
-    d += `Q${f(x0)} ${f(y0)} ${f((x0 + x1) / 2)} ${f((y0 + y1) / 2)}`;
+  let d = '';
+  for (const o of strokeOutlines(s.points, s, true)) {
+    if (!o.length) continue;
+    d += `M${f(o[0][0])} ${f(o[0][1])}`;
+    for (let i = 1; i < o.length; i++) {
+      const [x0, y0] = o[i - 1];
+      const [x1, y1] = o[i];
+      d += `Q${f(x0)} ${f(y0)} ${f((x0 + x1) / 2)} ${f((y0 + y1) / 2)}`;
+    }
+    d += 'Z';
   }
-  return d + 'Z';
+  return d;
 }
 
 // Committed strokes are immutable, so their tessellated outline is cached by identity.
