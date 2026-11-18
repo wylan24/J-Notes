@@ -5,6 +5,8 @@ import {
   type DashStyle,
   type EraseMode,
   type InputPoint,
+  type CropRect,
+  type ImageItem,
   type LinkItem,
   type LinkTarget,
   type Page,
@@ -23,6 +25,9 @@ import { pixelToHex } from '../core/color';
 import { newTape, tapeAt, tapeRect } from '../core/tape';
 import { isScribble, scribbledStrokes } from '../core/scribble';
 import { inkKind, type InkKind } from '../core/contentKinds';
+import { CropOverlay } from './CropOverlay';
+import { cropPatch, flipPatch } from '../core/imageEdit';
+import { canRotate, itemRotation } from '../core/items';
 import { snapMove, snapTargets, type SnapGuide, type SnapTargets } from '../core/snap';
 import { arrangeSelectionOps, lockSelectionOps, unlockedContent, type Arrange } from '../core/arrange';
 import { lassoAllowsItem, lassoPolygon, selectWithLasso, type LassoKind, type LassoShape } from '../core/lasso';
@@ -247,6 +252,8 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   // Snapping while a selection is dragged: what it can line up with (found once per drag), and the guides showing.
   const snapRef = useRef<SnapTargets | null>(null);
   const [guides, setGuides] = useState<SnapGuide[]>([]);
+  // Cropping a photo: the photo is hidden on the canvas while the crop overlay shows all of it.
+  const [cropping, setCroppingState] = useState<ImageItem | null>(null);
   // Mirror for the rAF painter, which must never see a stale closure.
   const dragRef = useRef<{ m: Matrix; ids: string[] } | null>(null);
   // Resize (corner handles) or rotate (top handle) of a lasso selection in progress.
@@ -834,8 +841,36 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   const selStrokes = selected ? selectedStrokes(page, selected) : [];
   // While resizing, the box follows the preview rather than the stored item.
   const shownPage = resize ? { ...page, items: page.items.map((it) => (it.id === resize.item.id ? resize.preview : it)) } : page;
-  const selBounds = selected && !editing && selectionBounds(shownPage, selected);
+  const selBounds = selected && !editing && !cropping && selectionBounds(shownPage, selected);
   const soleItem = selected && !selected.strokeIds.length && selected.itemIds.length === 1 ? (page.items.find((it) => it.id === selected.itemIds[0]) ?? null) : null;
+  // A turned item resizes with the corner handles (uniformly, about a corner) rather than its own handle.
+  const soleTurned = !!soleItem && !!itemRotation(soleItem);
+
+  const startCrop = (it: ImageItem) => {
+    hiddenItems.current = new Set([it.id]);
+    setCroppingState(it);
+    renderBase();
+  };
+  const endCrop = (crop: CropRect | null) => {
+    const it = cropping;
+    hiddenItems.current = null;
+    setCroppingState(null);
+    const op = it && crop ? updateItemOp(pageRef.current, it.id, cropPatch(it, crop)) : null;
+    if (op) store.dispatch([op]);
+    else renderBase();
+  };
+  const flipSoleImage = (axis: 'h' | 'v') => {
+    if (soleItem?.kind !== 'image') return;
+    const op = updateItemOp(page, soleItem.id, flipPatch(soleItem, axis));
+    if (op) store.dispatch([op]);
+  };
+
+  /** CSS to turn an item's text editor with the item, about the item's centre. */
+  const turnStyle = (it: PageItem): React.CSSProperties => {
+    const theta = itemRotation(it);
+    return theta ? { transform: `rotate(${theta}rad)`, transformOrigin: `${(it.w * scale) / 2}px ${(it.h * scale) / 2}px` } : {};
+  };
+
   const selTexts = selected ? page.items.filter((it): it is TextItem => it.kind === 'text' && selected.itemIds.includes(it.id)) : [];
 
   // --- Resize and rotate handles (lasso selections) ----------------------------------
@@ -1080,6 +1115,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
             }
           />
         ))}
+      {cropping && <CropOverlay item={cropping} scale={scale} image={images(cropping.blobId)} onDone={endCrop} onCancel={() => endCrop(null)} />}
       {selBounds && (
         <>
           <div
@@ -1103,7 +1139,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
             onPointerCancel={onSelUp}
             onDoubleClick={editSoleItem}
           >
-            {soleItem && !drag && !(soleItem.kind === 'sticky' && soleItem.collapsed) && (
+            {soleItem && !soleTurned && !drag && !(soleItem.kind === 'sticky' && soleItem.collapsed) && (
               <div
                 className="resize-handle"
                 aria-label="Resize"
@@ -1113,7 +1149,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
                 onPointerCancel={onResizeUp}
               />
             )}
-            {!soleItem && !drag && (!xform || xform.kind === 'scale') &&
+            {(!soleItem || soleTurned) && !drag && (!xform || xform.kind === 'scale') &&
               (['nw', 'ne', 'sw', 'se'] as const).map((c) => (
                 <div
                   key={c}
@@ -1125,7 +1161,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
                   onPointerCancel={onXformUp}
                 />
               ))}
-            {!soleItem && !drag && selected && selected.strokeIds.length > 0 && (!xform || xform.kind === 'rotate') && (
+            {!drag && selected && (soleItem ? canRotate(soleItem) : true) && (!xform || xform.kind === 'rotate') && (
               <div
                 className="rotate-handle"
                 aria-label="Rotate selection"
@@ -1146,7 +1182,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
                 left: selBounds.minX * scale,
                 // Above the selection (clear of the rotate handle), or below it near the top of the page.
                 top: (() => {
-                  const above = selBounds.minY * scale - (selected && selected.strokeIds.length && !soleItem ? 88 : 52);
+                  const above = selBounds.minY * scale - (selected && (soleItem ? canRotate(soleItem) : true) ? 88 : 52);
                   return above >= 4 ? above : selBounds.maxY * scale + 16;
                 })(),
               }}
@@ -1158,6 +1194,13 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
                 <>
                   <button onClick={() => onCopy(selected, true)}>Cut</button>
                   <button onClick={() => onCopy(selected, false)}>Copy</button>
+                </>
+              )}
+              {soleItem?.kind === 'image' && (
+                <>
+                  <button onClick={() => startCrop(soleItem)}>Crop</button>
+                  <button onClick={() => flipSoleImage('h')} title="Flip horizontally">Flip ↔</button>
+                  <button onClick={() => flipSoleImage('v')} title="Flip vertically">Flip ↕</button>
                 </>
               )}
               <button onClick={duplicateSelection}>Duplicate</button>
@@ -1256,6 +1299,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
                   padding: TEXT_PAD * scale,
                   font: `${editing.item.size * scale}px/${LINE_HEIGHT} ${fontFamily(editing.item.font)}`,
                   color: editing.item.color,
+                  ...turnStyle(editing.item),
                 }
               : {
                   left: editing.item.x * scale,
@@ -1265,6 +1309,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
                   padding: STICKY_PAD * scale,
                   font: `${STICKY_TEXT_SIZE * scale}px/${LINE_HEIGHT} ${fontFamily('sans')}`,
                   background: editing.item.color,
+                  ...turnStyle(editing.item),
                 }
           }
         />

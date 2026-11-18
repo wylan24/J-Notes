@@ -3,12 +3,14 @@
 // ink as filled outlines, templates as lines, text as real text. Layers match the screen:
 // background, template, images and text boxes, highlighter, pen, sticky notes.
 import type { PDFDocument, PDFFont, PDFImage, PDFPage } from 'pdf-lib';
-import { LINE_HEIGHT, STICKY_ICON, STICKY_PAD, STICKY_TEXT_SIZE, TEXT_PAD, textLines, wrapLines } from '../core/items';
+import { itemRect, LINE_HEIGHT, STICKY_ICON, STICKY_PAD, STICKY_TEXT_SIZE, TEXT_PAD, textLines, wrapLines } from '../core/items';
 import { pagePaper, pageSize, type NotebookDoc, type Page, type PageItem, type Stroke } from '../core/model';
 import { hexToRgb, placement, type Placement } from '../core/pdfPlacement';
 import { templateLayout } from '../core/templates';
 import { HIGHLIGHTER_ALPHA, steadied, strokeSvgPath } from '../render/stroke';
 import { isOverItem, LINK_COLOR } from '../render/items';
+import { fullImageBox, itemMatrix } from '../core/imageEdit';
+import { invert, isIdentity, multiply, type Matrix } from '../core/transform';
 import { LINK_PAD, LINK_TEXT_SIZE } from '../core/links';
 import { dabsByLevel, pencilAlpha, pencilDabs, type Dab } from '../core/pencil';
 import { PAPER_STYLES } from '../render/page';
@@ -84,15 +86,17 @@ class ExportContext {
       }
     }
 
-    for (const it of page.items) if (!isOverItem(it)) await this.item(draw, it);
+    for (const it of page.items) if (!isOverItem(it)) await draw.within(it, () => this.item(draw, it));
     for (const tool of ['highlighter', 'pen'] as const) for (const s of page.strokes) if (s.tool === tool) draw.stroke(s);
-    for (const it of page.items) if (isOverItem(it)) await this.item(draw, it);
+    for (const it of page.items) if (isOverItem(it)) await draw.within(it, () => this.item(draw, it));
   }
 
   private async item(draw: PageDrawer, it: PageItem): Promise<void> {
     if (it.kind === 'image') {
       const img = await this.image(it.blobId);
-      if (img) draw.image(img, it.x, it.y, it.w, it.h);
+      // A cropped photo is the whole image placed so the crop fills the box, clipped to the box (see `within`).
+      const full = fullImageBox(it);
+      if (img) draw.image(img, full.minX, full.minY, full.maxX - full.minX, full.maxY - full.minY);
       else draw.rect(it.x, it.y, it.w, it.h, '#ecebe7');
       return;
     }
@@ -227,6 +231,35 @@ class PageDrawer {
     const [ax, ay] = this.place.at(x1, y1);
     const [bx, by] = this.place.at(x2, y2);
     this.page.drawLine({ start: { x: ax, y: ay }, end: { x: bx, y: by }, thickness: this.place.s, color: this.color(color) });
+  }
+
+  /**
+   * Draw an item's content under its rotation and mirroring, as on screen; a cropped photo is also
+   * clipped to its box.
+   */
+  async within(it: PageItem, paint: () => Promise<void>): Promise<void> {
+    const m = itemMatrix(it);
+    const crop = it.kind === 'image' && !!it.crop;
+    if (isIdentity(m) && !crop) return paint();
+    const L = this.lib;
+    // The page-unit transform conjugated into PDF space: placement ∘ m ∘ placement⁻¹.
+    const [ox, oy] = this.place.at(0, 0);
+    const [ax, ay] = this.place.at(1, 0);
+    const [bx, by] = this.place.at(0, 1);
+    const P: Matrix = [ax - ox, ay - oy, bx - ox, by - oy, ox, oy];
+    const M = multiply(multiply(P, m), invert(P));
+    const ops = [L.pushGraphicsState(), L.concatTransformationMatrix(...M)];
+    if (crop) {
+      const r = itemRect(it);
+      const corners = [this.place.at(r.minX, r.minY), this.place.at(r.maxX, r.minY), this.place.at(r.maxX, r.maxY), this.place.at(r.minX, r.maxY)];
+      ops.push(L.moveTo(...corners[0]), ...corners.slice(1).map((c) => L.lineTo(...c)), L.closePath(), L.clip(), L.endPath());
+    }
+    this.page.pushOperators(...ops);
+    try {
+      await paint();
+    } finally {
+      this.page.pushOperators(L.popGraphicsState());
+    }
   }
 
   image(img: PDFImage, x: number, y: number, w: number, h: number): void {

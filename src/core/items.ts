@@ -64,19 +64,62 @@ export function textHeight(t: Pick<TextItem, 'text' | 'w' | 'size'>, measure: Me
   return textLines(t, measure).length * t.size * LINE_HEIGHT + 2 * TEXT_PAD;
 }
 
-export function itemBounds(it: PageItem): Bounds {
+/** The item's box before rotation (a collapsed sticky note is its icon). */
+export function itemRect(it: PageItem): Bounds {
   const collapsed = it.kind === 'sticky' && it.collapsed;
   const w = collapsed ? STICKY_ICON : it.w;
   const h = collapsed ? STICKY_ICON : it.h;
   return { minX: it.x, minY: it.y, maxX: it.x + w, maxY: it.y + h };
 }
 
+/** Photos, text boxes and open sticky notes turn; links, tape and collapsed notes stay square to the page. */
+export function canRotate(it: PageItem): boolean {
+  return it.kind === 'image' || it.kind === 'text' || (it.kind === 'sticky' && !it.collapsed);
+}
+
+/** The item's rotation as drawn: zero for kinds that don't turn. */
+export const itemRotation = (it: PageItem): number => (canRotate(it) ? it.rotation ?? 0 : 0);
+
+/** An angle in (-π, π], with near-zero as undefined so an unturned item has no `rotation` field. */
+export function normalizeRotation(theta: number): number | undefined {
+  let t = theta % (2 * Math.PI);
+  if (t > Math.PI) t -= 2 * Math.PI;
+  if (t <= -Math.PI) t += 2 * Math.PI;
+  return Math.abs(t) < 1e-6 ? undefined : t;
+}
+
+/** The axis-aligned box around the item as drawn, rotation included. */
+export function itemBounds(it: PageItem): Bounds {
+  const r = itemRect(it);
+  const theta = itemRotation(it);
+  if (!theta) return r;
+  const cx = (r.minX + r.maxX) / 2, cy = (r.minY + r.maxY) / 2;
+  const hw = (r.maxX - r.minX) / 2, hh = (r.maxY - r.minY) / 2;
+  const c = Math.abs(Math.cos(theta)), s = Math.abs(Math.sin(theta));
+  const ex = hw * c + hh * s, ey = hw * s + hh * c;
+  return { minX: cx - ex, minY: cy - ey, maxX: cx + ex, maxY: cy + ey };
+}
+
+/** Whether `pt` is on the item as drawn (inside its turned box). */
+export function pointOnItem(it: PageItem, pt: Vec): boolean {
+  const r = itemRect(it);
+  const theta = itemRotation(it);
+  let { x, y } = pt;
+  if (theta) {
+    const cx = (r.minX + r.maxX) / 2, cy = (r.minY + r.maxY) / 2;
+    const c = Math.cos(-theta), s = Math.sin(-theta);
+    const dx = x - cx, dy = y - cy;
+    x = cx + dx * c - dy * s;
+    y = cy + dx * s + dy * c;
+  }
+  return x >= r.minX && x <= r.maxX && y >= r.minY && y <= r.maxY;
+}
+
 /** The topmost item at `pt`. Sticky notes are drawn above everything, so they are hit first. */
 export function itemAt(page: Page, pt: Vec, kinds?: PageItem['kind'][]): PageItem | null {
   const hit = (it: PageItem) => {
     if (kinds && !kinds.includes(it.kind)) return false;
-    const b = itemBounds(it);
-    return pt.x >= b.minX && pt.x <= b.maxX && pt.y >= b.minY && pt.y <= b.maxY;
+    return pointOnItem(it, pt);
   };
   const items = page.items;
   for (let i = items.length - 1; i >= 0; i--) if (items[i].kind === 'sticky' && hit(items[i])) return items[i];

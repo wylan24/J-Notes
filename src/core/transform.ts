@@ -1,7 +1,7 @@
 // 2D affine transforms for resizing and rotating lasso selections.
 import type { InputPoint, ItemPatch, Page, PageItem, Stroke } from './model';
 import type { Bounds, Vec } from './geometry';
-import { itemBounds, STICKY_ICON } from './items';
+import { canRotate, itemBounds, normalizeRotation, STICKY_ICON } from './items';
 import { updateItemOp, type DocOp } from './ops';
 import { selectedItems, selectedStrokes, type Selection } from './selection';
 
@@ -85,9 +85,9 @@ export function transformStroke(s: Stroke, m: Matrix): Stroke {
 }
 
 /**
- * Items move with their centre and scale uniformly (text boxes scale their font too).
- * Items have no rotation of their own, so rotating a selection carries them around without turning them.
- * A collapsed sticky note keeps its size; its icon is fixed.
+ * Items move with their centre and scale uniformly (text boxes scale their font too). Rotating a
+ * selection turns photos, text boxes and open sticky notes with it; links, tape and collapsed notes
+ * are carried around without turning. A collapsed sticky note keeps its size; its icon is fixed.
  */
 export function transformItem<T extends PageItem>(it: T, m: Matrix): T {
   return { ...it, ...itemPatch(it, m) };
@@ -102,6 +102,8 @@ function itemPatch(it: PageItem, m: Matrix): ItemPatch {
   const h = it.h * k;
   const patch: ItemPatch = { x: c.x - w / 2, y: c.y - h / 2, w, h };
   if (it.kind === 'text') patch.size = it.size * k;
+  const turn = rotationAngle(m);
+  if (canRotate(it) && Math.abs(turn) > 1e-9) patch.rotation = normalizeRotation((it.rotation ?? 0) + turn);
   return patch;
 }
 

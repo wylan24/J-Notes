@@ -2,6 +2,8 @@ import type { ImageItem, LinkItem, PageItem, StickyItem, TapeItem, TextItem } fr
 import { LINK_PAD, LINK_TEXT_SIZE } from '../core/links';
 import { fontFamily, LINE_HEIGHT, STICKY_ICON, STICKY_PAD, STICKY_TEXT_SIZE, TEXT_PAD, textLines, wrapLines, type MeasureText } from '../core/items';
 import { getBlob } from '../storage/db';
+import { cropOf, itemMatrix } from '../core/imageEdit';
+import { isIdentity } from '../core/transform';
 
 export type ImageResolver = (blobId: string) => CanvasImageSource | null;
 
@@ -106,10 +108,24 @@ export interface ItemPaintOptions {
   revealed?: ReadonlySet<string>;
 }
 
+/** Pixel size of a loaded image, whatever kind of source it is. */
+export function sourceSize(img: CanvasImageSource): { w: number; h: number } {
+  if (typeof HTMLImageElement !== 'undefined' && img instanceof HTMLImageElement) return { w: img.naturalWidth, h: img.naturalHeight };
+  const s = img as { width: number | { baseVal: { value: number } }; height: number | { baseVal: { value: number } } };
+  const n = (v: number | { baseVal: { value: number } }) => (typeof v === 'number' ? v : v.baseVal.value);
+  return { w: n(s.width), h: n(s.height) };
+}
+
 function paintImage(ctx: CanvasRenderingContext2D, it: ImageItem, images?: ImageResolver) {
   const img = images?.(it.blobId);
   if (img) {
-    ctx.drawImage(img, it.x, it.y, it.w, it.h);
+    const c = cropOf(it);
+    if (c.x === 0 && c.y === 0 && c.w === 1 && c.h === 1) {
+      ctx.drawImage(img, it.x, it.y, it.w, it.h);
+    } else {
+      const { w, h } = sourceSize(img);
+      ctx.drawImage(img, c.x * w, c.y * h, c.w * w, c.h * h, it.x, it.y, it.w, it.h);
+    }
     return;
   }
   ctx.save();
@@ -254,10 +270,21 @@ export function paintItems(ctx: CanvasRenderingContext2D, items: readonly PageIt
     if (opts.hidden?.has(stored.id)) continue;
     const it = opts.override?.get(stored.id) ?? stored;
     if (isOverItem(it) !== (layer === 'over')) continue;
-    if (it.kind === 'image') paintImage(ctx, it, opts.images);
-    else if (it.kind === 'text') paintText(ctx, it);
-    else if (it.kind === 'link') paintLink(ctx, it);
-    else if (it.kind === 'tape') paintTape(ctx, it, !!opts.revealed?.has(it.id));
-    else paintSticky(ctx, it);
+    const m = itemMatrix(it);
+    const turned = !isIdentity(m);
+    if (turned) {
+      ctx.save();
+      ctx.transform(...m);
+    }
+    paintItem(ctx, it, opts);
+    if (turned) ctx.restore();
   }
+}
+
+function paintItem(ctx: CanvasRenderingContext2D, it: PageItem, opts: ItemPaintOptions) {
+  if (it.kind === 'image') paintImage(ctx, it, opts.images);
+  else if (it.kind === 'text') paintText(ctx, it);
+  else if (it.kind === 'link') paintLink(ctx, it);
+  else if (it.kind === 'tape') paintTape(ctx, it, !!opts.revealed?.has(it.id));
+  else paintSticky(ctx, it);
 }

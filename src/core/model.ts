@@ -93,6 +93,16 @@ interface ItemBase {
   h: number;
   /** Locked: the eraser and lasso pass over it, and tools don't edit it. Absent when unlocked. */
   locked?: true;
+  /** Turn about the box's centre, in radians (clockwise on screen). Absent for none. */
+  rotation?: number;
+}
+
+/** Part of an image to show, as fractions (0..1) of the source image's width and height. */
+export interface CropRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 export interface TextItem extends ItemBase {
@@ -107,6 +117,10 @@ export interface ImageItem extends ItemBase {
   kind: 'image';
   /** Key of the image bytes in this notebook's blob store. */
   blobId: string;
+  /** The part of the image shown in the box; absent for all of it. */
+  crop?: CropRect;
+  /** Mirrored across its vertical axis (h), horizontal axis (v), or both. Absent for neither. */
+  flip?: 'h' | 'v' | 'hv';
 }
 
 export interface StickyItem extends ItemBase {

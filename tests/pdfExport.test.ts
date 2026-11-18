@@ -131,7 +131,40 @@ describe('export as PDF', () => {
     expect(notes).toContain('Summary'); // the Cornell template's label, drawn as text
   });
 
+  it('exports turned text as turned text, and a cropped, mirrored photo', async () => {
+    // A 1×1 PNG.
+    const png = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=='), (c) => c.charCodeAt(0));
+    const doc: NotebookDoc = {
+      id: 'r',
+      pages: [
+        {
+          id: 'p',
+          template: 'blank',
+          strokes: [],
+          items: [
+            { id: 't', kind: 'text', x: 300, y: 300, w: 300, h: 30, text: 'Turned words', font: 'sans', size: 18, color: '#333', rotation: Math.PI / 2 },
+            { id: 'i', kind: 'image', x: 100, y: 400, w: 100, h: 100, blobId: 'img', crop: { x: 0.25, y: 0, w: 0.5, h: 1 }, flip: 'h', rotation: 0.3 },
+          ],
+        },
+      ],
+    };
+    await createNotebook(
+      { id: 'r', title: 'Turn', cover: '#000', template: 'blank', createdAt: 1, updatedAt: 1, favourite: false, trashedAt: null, pageCount: 1 },
+      doc,
+      [{ docId: 'r', id: 'img', type: 'image/png', bytes: png.buffer }],
+    );
+    const out = await exportPdf(doc, 'r', 'Turn', { pages: [0], background: true });
+    const pdf = await getDocument({ data: out.slice(), isEvalSupported: false, useSystemFonts: false, verbosity: 0 }).promise;
+    const items = (await (await pdf.getPage(1)).getTextContent()).items.filter((it) => 'str' in it && it.str.includes('Turned'));
+    expect(items).toHaveLength(1);
+    // A quarter turn clockwise on the page: the text's x axis points down the page (negative y in PDF space).
+    const [a, b] = (items[0] as { transform: number[] }).transform;
+    expect(Math.abs(a)).toBeLessThan(1e-6);
+    expect(b).toBeLessThan(0);
+  });
+
   it('exports content only when backgrounds are off', async () => {
+
     const bytes = await sourcePdf();
     const pages = pdfPages('src', [pdfPageSize(612, 792)]);
     pages[0] = { ...pages[0], strokes: [stroke('p', 'pen', '#c00')] };
