@@ -3,6 +3,7 @@ import { templateLayout, templateLayoutIn, type LineTone } from '../core/templat
 import { strokeBounds, type Bounds } from '../core/geometry';
 import { itemBounds } from '../core/items';
 import { contentBounds } from '../core/whiteboard';
+import { contentByLayer } from '../core/layers';
 import { paintStroke } from './stroke';
 import { ensureImage, imageResolver, paintItems, type ImageResolver, type ItemPaintOptions } from './items';
 import { ensurePdfRaster, pdfResolver } from './pdf';
@@ -117,8 +118,8 @@ const meets = (a: Bounds, b: Bounds) => a.minX <= b.maxX && a.maxX >= b.minX && 
 
 /**
  * Paint a full page into a canvas at `scale` page-units→CSS px and the given
- * device pixel ratio. Resizes the backing store if needed. Layers, bottom to top:
- * template, images and text boxes, highlighter, pen, sticky notes.
+ * device pixel ratio. Resizes the backing store if needed. Bottom to top: the template, then
+ * each shown page layer in turn: its images and text boxes, highlighter, pen, sticky notes.
  */
 export function paintPage(canvas: HTMLCanvasElement | OffscreenCanvas, page: Page, scale: number, dpr: number, opts: PaintOptions = {}): void {
   const size = pageSize(page);
@@ -137,16 +138,18 @@ export function paintPage(canvas: HTMLCanvasElement | OffscreenCanvas, page: Pag
 
 function paintContent(ctx: CanvasRenderingContext2D, page: Page, opts: PaintOptions): void {
   const r = opts.region;
-  // A tile of a large page draws only what reaches into it (an item being dragged counts where it is now).
-  const strokes = r ? page.strokes.filter((s) => meets(strokeBounds(s), r)) : page.strokes;
-  const items = r ? page.items.filter((it) => meets(itemBounds(opts.items?.override?.get(it.id) ?? it), r)) : page.items;
   const dark = pagePaper(page) === 'dark' && !opts.trueColors;
   const itemOpts = dark ? { ...opts.items, dark } : opts.items;
   if (page.background) paintBackground(ctx, page.background, pageSize(page), opts);
   paintTemplate(ctx, page.template, pageSize(page), pagePaper(page), r);
-  paintItems(ctx, items, 'under', itemOpts);
-  paintStrokes(ctx, strokes, opts.hidden, opts.replace, opts.fade, dark);
-  paintItems(ctx, items, 'over', itemOpts);
+  for (const layer of contentByLayer(page)) {
+    // A tile of a large page draws only what reaches into it (an item being dragged counts where it is now).
+    const strokes = r ? layer.strokes.filter((s) => meets(strokeBounds(s), r)) : layer.strokes;
+    const items = r ? layer.items.filter((it) => meets(itemBounds(opts.items?.override?.get(it.id) ?? it), r)) : layer.items;
+    paintItems(ctx, items, 'under', itemOpts);
+    paintStrokes(ctx, strokes, opts.hidden, opts.replace, opts.fade, dark);
+    paintItems(ctx, items, 'over', itemOpts);
+  }
 }
 
 /**

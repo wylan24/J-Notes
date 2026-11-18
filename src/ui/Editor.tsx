@@ -34,6 +34,8 @@ import { OutlinePanel } from './OutlinePanel';
 import { addOutlineEntry } from '../core/outline';
 import { SearchPanel, type SearchHit } from './SearchPanel';
 import { PdfExportDialog } from './PdfExportDialog';
+import { LayerExportDialog, LayersPanel, layerNotice } from './LayersPanel';
+import { findLayer, layerNames, pageLayers, visibleContent, withLayers, workingContent } from '../core/layers';
 import type { CustomTemplate } from './TemplateGrid';
 import { Persister, type SaveStatus } from '../storage/persister';
 import { downloadBlob, exportPagePng, renderBoardThumbnail, renderContentThumbnail, renderRegionPng, renderThumbnail } from '../render/page';
@@ -42,7 +44,7 @@ import { screenshotImage, type Rect } from '../core/screenshot';
 import { imageResolver, measurer, primeImage } from '../render/items';
 import { isImageFile, prepareImage } from '../io/images';
 import { FONTS, newImage, type FontKey, type TextStyle } from '../core/items';
-import type { PageItem } from '../core/model';
+import type { Page, PageItem } from '../core/model';
 import { referencedBlobIds, toFile } from '../io/notebookFile';
 import { PageView, type GestureState, type Selection, type ToolState } from './PageView';
 import { Icon } from './icons';
@@ -566,7 +568,7 @@ function EditorInner({
   const insertPhotos = async (files: File[], clientX?: number, clientY?: number) => {
     const images = files.filter(isImageFile);
     const target = photoTarget(clientX, clientY);
-    if (!images.length || !target) return;
+    if (!images.length || !target || layerBlocked(target.pageId)) return;
     const size = pageSize(store.doc.pages.find((p) => p.id === target.pageId) ?? {});
     const items: PageItem[] = [];
     for (const [i, file] of images.entries()) {
@@ -644,6 +646,15 @@ function EditorInner({
     return () => clearTimeout(t);
   }, [notice]);
 
+  /** Tell the person why nothing was added when page `pageId`'s active layer is hidden or locked. */
+  const layerBlocked = (pageId: string): boolean => {
+    const page = store.doc.pages.find((p) => p.id === pageId);
+    const layer = page && findLayer(page, store.activeLayer(pageId));
+    if (!layer || (!layer.hidden && !layer.locked)) return false;
+    setNotice(layerNotice(layer.name, layer.hidden ? 'hidden' : 'locked'));
+    return true;
+  };
+
   const saveAsElement = async (sel: Selection) => {
     const page = store.doc.pages.find((p) => p.id === sel.pageId);
     const content = page && makeElementContent(page, sel);
@@ -669,7 +680,7 @@ function EditorInner({
 
   const placeElementAt = async (el: SavedElement, clientX?: number, clientY?: number): Promise<boolean> => {
     const target = photoTarget(clientX, clientY, clientX !== undefined);
-    if (!target) return false;
+    if (!target || layerBlocked(target.pageId)) return false;
     // Photos are stored per notebook, so copy the element's into this one first.
     for (const b of el.blobs) await putBlob({ docId: store.doc.id, ...b });
     const placed = placeElement(el, target.pageId, target, pageSize(store.doc.pages.find((p) => p.id === target.pageId) ?? {}));
@@ -686,7 +697,7 @@ function EditorInner({
   /** A pasted web address becomes a link, centred where the photo would go. */
   const pasteLink = (url: string) => {
     const target = photoTarget();
-    if (!target) return;
+    if (!target || layerBlocked(target.pageId)) return;
     const label = linkLabel(url);
     const w = measurer('sans', LINK_TEXT_SIZE)(label) + 2 * LINK_PAD + 2;
     const h = LINK_TEXT_SIZE * 1.4 + 2 * LINK_PAD;
@@ -769,6 +780,7 @@ function EditorInner({
         downloadBlob(blob, `${meta.title || 'Notebook'} screenshot.png`);
         return;
       }
+      if (layerBlocked(pageId)) return;
       const blobId = newId();
       await putBlob({ docId: store.doc.id, id: blobId, type: 'image/png', bytes: await blob.arrayBuffer() });
       const item = screenshotImage(blobId, rect, pageSize(page));
@@ -782,7 +794,7 @@ function EditorInner({
   /** Paste a clip centred in view, as a new selection. Its photos are copied into this notebook first. */
   const pasteClip = async (clip: Clip) => {
     const target = photoTarget();
-    if (!target) return;
+    if (!target || layerBlocked(target.pageId)) return;
     try {
       for (const b of clip.blobs) await putBlob({ docId: store.doc.id, ...b });
     } catch (e) {
@@ -990,6 +1002,31 @@ function EditorInner({
   };
   const currentBookmarked = !!doc.pages[currentPage] && isBookmarked(doc, doc.pages[currentPage].id);
 
+  // --- Layers ----------------------------------------------------------------------------------
+  const [layersOpen, setLayersOpen] = useState(false);
+  const [layerExportOpen, setLayerExportOpen] = useState(false);
+  const layersPage = doc.pages[board ? 0 : currentPage];
+  /** The current page as tools see it: the unlocked content of its active layer. */
+  const workingPage = layersPage && workingContent(layersPage, store.activeLayer(layersPage.id));
+  const chooseLayer = (pageId: string, layerId: string) => {
+    // A selection belongs to the layer it was made on.
+    if (selection?.pageId === pageId) setSelection(null);
+    store.setActiveLayer(pageId, layerId);
+  };
+  const exportLayers = async (page: Page, ids: ReadonlySet<string>, format: 'png' | 'pdf') => {
+    let only = withLayers(page, (l) => ids.has(l.id));
+    if (board) only = cropToContent(only);
+    const name = board ? meta.title : `${meta.title} p${currentPage + 1}`;
+    if (format === 'png') {
+      await exportPagePng(only, doc.id, `${name}.png`);
+    } else {
+      const { exportPdf } = await import('../io/pdfExport');
+      const bytes = await exportPdf({ ...store.doc, pages: [only] }, store.doc.id, meta.title, { pages: [0], background: true });
+      downloadBlob(new Blob([bytes], { type: 'application/pdf' }), `${name}.pdf`);
+    }
+    setLayerExportOpen(false);
+  };
+
   // --- PDF text search -------------------------------------------------------------------------
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchHit, setSearchHit] = useState<SearchHit | null>(null);
@@ -1125,9 +1162,11 @@ function EditorInner({
   };
 
   const [pdfExportOpen, setPdfExportOpen] = useState(false);
-  const exportAsPdf = async (pages: number[], background: boolean) => {
+  const exportAsPdf = async (pages: number[], background: boolean, layers: ReadonlySet<string> | null) => {
     const { exportPdf } = await import('../io/pdfExport');
-    const bytes = await exportPdf(store.doc, store.doc.id, meta.title, { pages, background });
+    // Chosen layers are matched by name, since each page has its own.
+    const source = layers ? { ...store.doc, pages: store.doc.pages.map((p) => withLayers(p, (l) => layers.has(l.name))) } : store.doc;
+    const bytes = await exportPdf(source, store.doc.id, meta.title, { pages, background });
     const suffix = pages.length === 1 ? ` p${pages[0] + 1}` : '';
     downloadBlob(new Blob([bytes], { type: 'application/pdf' }), `${meta.title}${suffix}.pdf`);
     setPdfExportOpen(false);
@@ -1137,7 +1176,7 @@ function EditorInner({
     const page = store.doc.pages[0];
     if (!page) return;
     const { exportPdf } = await import('../io/pdfExport');
-    const bytes = await exportPdf({ ...store.doc, pages: [cropToContent(page)] }, store.doc.id, meta.title, { pages: [0], background: true });
+    const bytes = await exportPdf({ ...store.doc, pages: [cropToContent(visibleContent(page))] }, store.doc.id, meta.title, { pages: [0], background: true });
     downloadBlob(new Blob([bytes], { type: 'application/pdf' }), `${meta.title}.pdf`);
   };
 
@@ -1242,6 +1281,7 @@ function EditorInner({
         setZoomAt(zoomRef.current * 1.2);
       } else if (mod && e.key.toLowerCase() === 'f') {
         e.preventDefault();
+        setLayersOpen(false);
         setSearchOpen(true);
       } else if (mod && e.key === '-') {
         e.preventDefault();
@@ -1386,8 +1426,24 @@ function EditorInner({
           </button>
           )}
           <button
+            className={`icon-btn ${layersOpen ? 'active' : ''}`}
+            onClick={() => {
+              if (!layersOpen) closeSearch();
+              setLayersOpen(!layersOpen);
+            }}
+            aria-pressed={layersOpen}
+            aria-label="Layers"
+            title={layersPage && pageLayers(layersPage).length > 1 ? `Layers (drawing on “${findLayer(layersPage, store.activeLayer(layersPage.id))?.name}”)` : 'Layers'}
+          >
+            <Icon name="layers" />
+          </button>
+          <button
             className={`icon-btn ${searchOpen ? 'active' : ''}`}
-            onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
+            onClick={() => {
+              if (!searchOpen) setLayersOpen(false);
+              if (searchOpen) closeSearch();
+              else setSearchOpen(true);
+            }}
             aria-pressed={searchOpen}
             aria-label="Search PDF text"
             title="Search (⌘F)"
@@ -1453,7 +1509,7 @@ function EditorInner({
               {board ? (
                 <>
                   {/* A board exports what is drawn on it, not the whole (mostly empty) page. */}
-                  <button onClick={() => doc.pages[0] && void exportPagePng(cropToContent(doc.pages[0]), doc.id, `${meta.title}.png`)}>Export as PNG</button>
+                  <button onClick={() => doc.pages[0] && void exportPagePng(cropToContent(visibleContent(doc.pages[0])), doc.id, `${meta.title}.png`)}>Export as PNG</button>
                   <button onClick={() => void exportBoardPdf()}>Export as PDF</button>
                 </>
               ) : (
@@ -1798,7 +1854,7 @@ function EditorInner({
                 ))}
               </div>
               <span className="divider" />
-              <DeleteItemsMenu page={doc.pages[currentPage]} onDelete={(kind) => doc.pages[currentPage] && store.dispatch(deleteContentOps(doc.pages[currentPage], kind))} />
+              <DeleteItemsMenu page={workingPage} onDelete={(kind) => workingPage && store.dispatch(deleteContentOps(workingPage, kind))} />
             </>
           )}
         </div>
@@ -1871,6 +1927,7 @@ function EditorInner({
               onCopy={(sel, cut) => void copySelection(sel, cut)}
               onScreenshot={(pageId, rect, action) => void takeScreenshot(pageId, rect, action)}
               onAddToOutline={addSelectionToOutline}
+              onLayerBlocked={(name, why) => setNotice(layerNotice(name, why))}
               onScribbleErase={(n) => setNotice(`Scribbled out ${n} ${n === 1 ? 'stroke' : 'strokes'} · Undo brings ${n === 1 ? 'it' : 'them'} back`)}
               revealed={revealed}
               onToggleTape={toggleTape}
@@ -1907,9 +1964,31 @@ function EditorInner({
         <NotebookPickerDialog currentId={doc.id} mode={pageDialog.kind} onCancel={() => setPageDialog(null)} onPick={(n) => sendPage(pageDialog.pageId, n, pageDialog.kind as 'move' | 'copy')} />
       )}
       {pdfExportOpen && (
-        <PdfExportDialog pageCount={doc.pages.length} currentPage={currentPage} onCancel={() => setPdfExportOpen(false)} onExport={exportAsPdf} />
+        <PdfExportDialog
+          pageCount={doc.pages.length}
+          currentPage={currentPage}
+          layerNames={layerNames(doc.pages)}
+          shownLayerNames={layerNames(doc.pages.map((p) => withLayers(p, (l) => !l.hidden)))}
+          onCancel={() => setPdfExportOpen(false)}
+          onExport={exportAsPdf}
+        />
       )}
       {searchOpen && <SearchPanel doc={doc} onJump={showSearchHit} onClose={closeSearch} />}
+      {layersOpen && layersPage && (
+        <LayersPanel
+          page={layersPage}
+          pageLabel={board ? 'Board' : `Page ${currentPage + 1}`}
+          activeId={store.activeLayer(layersPage.id)}
+          readOnly={readOnly}
+          onSelect={(id) => chooseLayer(layersPage.id, id)}
+          dispatch={(ops) => store.dispatch(ops)}
+          onExport={() => setLayerExportOpen(true)}
+          onClose={() => setLayersOpen(false)}
+        />
+      )}
+      {layerExportOpen && layersPage && (
+        <LayerExportDialog page={layersPage} onCancel={() => setLayerExportOpen(false)} onExport={(ids, format) => exportLayers(layersPage, ids, format)} />
+      )}
       {ruler && <RulerOverlay ruler={ruler} setRuler={setRuler} zoom={zoom} onClose={() => setRuler(null)} />}
       </div>
       </div>

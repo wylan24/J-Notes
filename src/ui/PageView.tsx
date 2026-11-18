@@ -40,7 +40,8 @@ import { screenshotRect, type Rect } from '../core/screenshot';
 import { cropPatch, flipPatch } from '../core/imageEdit';
 import { canRotate, itemRotation } from '../core/items';
 import { snapMove, snapTargets, type SnapGuide, type SnapTargets } from '../core/snap';
-import { arrangeSelectionOps, lockSelectionOps, unlockedContent, type Arrange } from '../core/arrange';
+import { arrangeSelectionOps, lockSelectionOps, type Arrange } from '../core/arrange';
+import { findLayer, visibleContent, workingContent } from '../core/layers';
 import { lassoAllowsItem, lassoPolygon, selectWithLasso, type LassoKind, type LassoShape } from '../core/lasso';
 import { pointsLength, strokeHitsCircle, type Vec } from '../core/geometry';
 import { edgeNear, mapEdge, projectToEdge, type Edge } from '../core/ruler';
@@ -155,6 +156,8 @@ interface Props {
   setZoomTarget?: (t: ZoomTarget) => void;
   /** Boxes to highlight (a search result on this page), in page units. */
   highlights?: readonly { x: number; y: number; w: number; h: number }[];
+  /** A tool was used while the active layer is hidden or locked, so it did nothing. */
+  onLayerBlocked?: (layerName: string, why: 'hidden' | 'locked') => void;
 }
 
 type EditableItem = TextItem | StickyItem;
@@ -250,6 +253,8 @@ type Active =
       pieces: Map<string, Stroke[]>;
       /** Shape and line items touched; they are erased whole in either mode. */
       shapeHits: Set<string> | null;
+      /** Ids of the content on the active layer the eraser may touch. */
+      erasable: ReadonlySet<string>;
       cursor: Vec;
       last: Vec;
     }
@@ -258,7 +263,7 @@ type Active =
   | { kind: 'laser'; pointerId: number; cursor: Vec }
   | { kind: 'tape'; pointerId: number; start: Vec; cur: Vec };
 
-export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, onScreenshot, onCopy, onAddToOutline, onFollowLink, onEditLink, readOnly, onLaser, onSample, revealed, onToggleTape, onScribbleErase, playback, onSeekInk, highlights }: Props) {
+export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, onScreenshot, onCopy, onAddToOutline, onFollowLink, onEditLink, readOnly, onLaser, onSample, revealed, onToggleTape, onScribbleErase, playback, onSeekInk, highlights, onLayerBlocked }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const baseRef = useRef<HTMLCanvasElement>(null);
   const liveRef = useRef<HTMLCanvasElement>(null);
@@ -321,6 +326,9 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   const darkPaper = pagePaper(page) === 'dark';
   const viewRef = useRef({ x: 0, y: 0, w: size.w, h: size.h });
   if (!tiled) viewRef.current = { x: 0, y: 0, w: size.w, h: size.h };
+
+  /** What tools can act on: the unlocked content of the page's active layer. */
+  const working = () => workingContent(pageRef.current, store.activeLayer(pageRef.current.id));
 
   /** A client (screen) point in page units, through the live layer. Also returns page units per CSS px. */
   const clientToPage = (cx: number, cy: number): Vec & { k: number } => {
@@ -673,10 +681,10 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   /** Text and Sticky tools: tap an item of that kind to edit it, or empty paper to add one. */
   const tapItemTool = (pt: Vec) => {
     if (tool.kind === 'text') {
-      const hit = itemAt(unlockedContent(pageRef.current), pt, ['text']);
+      const hit = itemAt(working(), pt, ['text']);
       setEditing(hit ? { item: hit as TextItem, isNew: false } : { item: newText(pt, tool.text, size), isNew: true });
     } else {
-      const hit = itemAt(unlockedContent(pageRef.current), pt, ['sticky']) as StickyItem | null;
+      const hit = itemAt(working(), pt, ['sticky']) as StickyItem | null;
       if (hit?.collapsed) {
         const op = updateItemOp(pageRef.current, hit.id, { collapsed: false });
         if (op) store.dispatch([op]);
@@ -752,8 +760,8 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     }
     // A press on a link follows it, and one on tape shows or covers what is under it, if it turns out
     // to be a tap, whatever the tool.
-    const link = onFollowLink ? linkAt(pageRef.current, pt, 4 / scale) : null;
-    const tape = !link && onToggleTape ? tapeAt(pageRef.current, pt) : null;
+    const link = onFollowLink ? linkAt(visibleContent(pageRef.current), pt, 4 / scale) : null;
+    const tape = !link && onToggleTape ? tapeAt(visibleContent(pageRef.current), pt) : null;
     linkTap.current = link || tape ? { pointerId: e.pointerId, link, tapeId: tape?.id ?? null, x: e.clientX, y: e.clientY, t: performance.now(), moved: false } : null;
     if ((link || tape) && (tool.kind === 'text' || tool.kind === 'sticky')) {
       // These tools act on press, so a press on a link or tape is taken as a tap on it.
@@ -764,9 +772,21 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     }
     // Playback mode: tapping recorded ink jumps the audio to when it was written.
     if (onSeekInk) {
-      const hit = strokeAtForSeek(pageRef.current.strokes, pt, 8 / scale);
+      const hit = strokeAtForSeek(visibleContent(pageRef.current).strokes, pt, 8 / scale);
       if (hit?.rec) {
         onSeekInk(hit.rec, seekTimeFor(hit));
+        return;
+      }
+    }
+    // Tools that add or remove content need a layer they can work on.
+    if (tool.kind !== 'lasso' && tool.kind !== 'laser') {
+      const layer = findLayer(pageRef.current, store.activeLayer(page.id));
+      if (layer && (layer.hidden || layer.locked)) {
+        // Links and tape still work; anything else is refused with a reason.
+        linkTap.current = null;
+        if (link) onFollowLink?.(link.target);
+        else if (tape) onToggleTape?.(tape.id);
+        else onLayerBlocked?.(layer.name, layer.hidden ? 'hidden' : 'locked');
         return;
       }
     }
@@ -796,15 +816,18 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       if (!straight && !ruler) armHold();
     } else if (tool.kind === 'eraser') {
       const kinds = tool.eraseKinds;
+      const work = working();
+      const erasable = new Set([...work.strokes.map((s) => s.id), ...work.items.map((it) => it.id)]);
       active.current = {
         kind: 'erase',
         pointerId: e.pointerId,
         r: tool.eraserPx / scale,
         mode: tool.eraseMode,
-        canErase: (s) => !s.locked && kinds.includes(inkKind(s)),
+        canErase: (s) => erasable.has(s.id) && kinds.includes(inkKind(s)),
         hits: new Set(),
         pieces: new Map(),
         shapeHits: kinds.includes('shapes') ? new Set() : null,
+        erasable,
         cursor: pt,
         last: pt,
       };
@@ -868,7 +891,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     }
     if (a.shapeHits) {
       for (const it of pageRef.current.items) {
-        if ((it.kind !== 'shape' && it.kind !== 'line') || it.locked || a.shapeHits.has(it.id)) continue;
+        if ((it.kind !== 'shape' && it.kind !== 'line') || !a.erasable.has(it.id) || a.shapeHits.has(it.id)) continue;
         if (pts.some((p) => touchesCircle(it, p, a.r))) {
           a.shapeHits.add(it.id);
           hiddenItems.current = a.shapeHits;
@@ -969,7 +992,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       if (commit) {
         // Scribbling over ink with the pen rubs it out (one undo step) instead of adding the scribble.
         if (tool.kind === 'pen' && tool.scribbleErase && !a.snap && isScribble(a.stroke.points)) {
-          const ids = scribbledStrokes(a.stroke.points, unlockedContent(pageRef.current).strokes);
+          const ids = scribbledStrokes(a.stroke.points, working().strokes);
           const op = ids.length ? removeStrokesOp(pageRef.current, ids) : null;
           if (op) {
             clearLiveOnNextBase.current = true;
@@ -987,7 +1010,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
           const fill = tool.kind === 'shapes' ? tool.shapeFill : null;
           let item = itemFromShape(shape, { color: a.stroke.color, width: a.stroke.width, dash: a.stroke.dash ?? 'solid', fill });
           // A line drawn from the edge of a shape (or to one) connects to it.
-          if (item.kind === 'line') item = attachDrawnLine(pageRef.current, item, ATTACH_SLOP_PX / scale);
+          if (item.kind === 'line') item = attachDrawnLine(visibleContent(pageRef.current), item, ATTACH_SLOP_PX / scale);
           store.dispatch([{ type: 'items.added', pageId: page.id, items: [item] }]);
           return;
         }
@@ -1017,7 +1040,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       setShot(screenshotRect(a.path[0], a.path[a.path.length - 1], size));
     } else if (a.kind === 'lasso' && commit) {
       // A tap (rather than a loop) selects the item under it.
-      const p = unlockedContent(pageRef.current);
+      const p = working();
       if (pointsLength(a.path as InputPoint[]) * scale < 8) {
         const hit = itemAt({ ...p, items: p.items.filter((it) => lassoAllowsItem(tool.lassoKinds, it)) }, a.path[0]);
         setSelection(hit ? { pageId: page.id, strokeIds: [], itemIds: [hit.id] } : null);
@@ -1038,12 +1061,12 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     const tap = readTap.current;
     readTap.current = null;
     if (!tap || tap.pointerId !== pointerId || tap.moved || performance.now() - tap.t > TAP_MS) return;
-    const link = linkAt(pageRef.current, tap.pt, 4 / scale);
+    const link = linkAt(visibleContent(pageRef.current), tap.pt, 4 / scale);
     if (link) return onFollowLink?.(link.target);
-    const tape = tapeAt(pageRef.current, tap.pt);
+    const tape = tapeAt(visibleContent(pageRef.current), tap.pt);
     if (tape) return onToggleTape?.(tape.id);
     if (onSeekInk) {
-      const hit = strokeAtForSeek(pageRef.current.strokes, tap.pt, 8 / scale);
+      const hit = strokeAtForSeek(visibleContent(pageRef.current).strokes, tap.pt, 8 / scale);
       if (hit?.rec) onSeekInk(hit.rec, seekTimeFor(hit));
     }
   };
@@ -1171,7 +1194,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     hidden.current = new Set(selected?.strokeIds ?? []);
     renderBase();
     if (liveRef.current) liveRef.current.style.mixBlendMode = 'normal';
-    snapRef.current = tool.snap && selected ? snapTargets(page, selected) : null;
+    snapRef.current = tool.snap && selected ? snapTargets(visibleContent(page), selected) : null;
     setDrag({ pointerId: e.pointerId, sx: e.clientX, sy: e.clientY, dx: 0, dy: 0 });
   };
   const onSelMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -1358,7 +1381,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     } else {
       const key = handle === 0 ? 'from' : 'to';
       const other = handle === 0 ? item.to : item.from;
-      let att = attachmentAt(pageRef.current, p, ATTACH_SLOP_PX / scale, new Set([item.id]));
+      let att = attachmentAt(visibleContent(pageRef.current), p, ATTACH_SLOP_PX / scale, new Set([item.id]));
       if (att && att.id === other?.id) att = null; // not both ends on one item
       const target = att && pageRef.current.items.find((it) => it.id === att!.id);
       const ends = lineEnds(item);

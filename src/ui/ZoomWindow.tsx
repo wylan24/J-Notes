@@ -3,6 +3,7 @@ import { pageSize, type InputPoint, type Page, type Stroke } from '../core/model
 import type { DocumentStore } from '../core/store';
 import { advance, back, newLine, panelToPage, resizeTarget, shouldAdvance, ZOOM_ASPECT, type ZoomTarget } from '../core/zoomWindow';
 import { paintRegion } from '../render/page';
+import { findLayer } from '../core/layers';
 import { imageResolver, onImagesLoaded } from '../render/items';
 import { pdfResolver } from '../render/pdf';
 import { HIGHLIGHTER_ALPHA, paintInk } from '../render/stroke';
@@ -37,7 +38,10 @@ export function ZoomWindow({ store, page, target, setTarget, tool, penOnly, onCl
   const advanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const targetRef = useRef(target);
   targetRef.current = target;
-  const canWrite = tool.kind === 'pen' || tool.kind === 'highlighter';
+  // Ink goes on the page's active layer, which has to be shown and unlocked.
+  const layer = findLayer(page, store.activeLayer(page.id));
+  const layerBlocked = !!layer && (layer.hidden || layer.locked);
+  const canWrite = (tool.kind === 'pen' || tool.kind === 'highlighter') && !layerBlocked;
 
   // Fill the width, but never take more than ~30% of the window's height.
   useLayoutEffect(() => {
@@ -156,7 +160,11 @@ export function ZoomWindow({ store, page, target, setTarget, tool, penOnly, onCl
         <button className="icon-btn sm" aria-label="More magnification" title="Zoom in" onClick={() => step(target.w / 1.2)}>
           <Icon name="plus" />
         </button>
-        <span className="zoom-hint">{canWrite ? 'Write here; lifting in the shaded end moves along the line' : 'Choose the pen or highlighter to write here'}</span>
+        <span className="zoom-hint">{canWrite
+            ? 'Write here; lifting in the shaded end moves along the line'
+            : layerBlocked
+              ? `${layer!.name} is ${layer!.hidden ? 'hidden' : 'locked'}: choose another layer to write here`
+              : 'Choose the pen or highlighter to write here'}</span>
         <button className="icon-btn sm" aria-label="Close the zoom window" title="Close" onClick={onClose}>
           <Icon name="close" />
         </button>

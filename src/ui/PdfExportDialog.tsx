@@ -7,21 +7,30 @@ type Range = 'all' | 'current' | 'custom';
 export function PdfExportDialog({
   pageCount,
   currentPage,
+  layerNames,
+  shownLayerNames,
   onCancel,
   onExport,
 }: {
   pageCount: number;
   currentPage: number;
+  /** Names of the notebook's layers; a choice is offered when there is more than one. */
+  layerNames: string[];
+  /** The names of layers shown on at least one page; chosen at first. */
+  shownLayerNames: string[];
   onCancel: () => void;
-  onExport: (pages: number[], background: boolean) => Promise<void>;
+  /** `layers`: names of the layers to export, or null for what is shown on each page. */
+  onExport: (pages: number[], background: boolean, layers: ReadonlySet<string> | null) => Promise<void>;
 }) {
+  const choosing = layerNames.length > 1;
+  const [layers, setLayers] = useState<ReadonlySet<string>>(() => new Set(shownLayerNames));
   const [range, setRange] = useState<Range>('all');
   const [custom, setCustom] = useState(`1-${pageCount}`);
   const [background, setBackground] = useState(true);
   const [busy, setBusy] = useState(false);
   const pages =
     range === 'all' ? Array.from({ length: pageCount }, (_, i) => i) : range === 'current' ? [currentPage] : parsePageRange(custom, pageCount);
-  const invalid = !pages?.length;
+  const invalid = !pages?.length || (choosing && !layers.size);
 
   return (
     <div className="modal-backdrop" onClick={() => !busy && onCancel()}>
@@ -35,7 +44,7 @@ export function PdfExportDialog({
           if (!pages?.length) return;
           setBusy(true);
           try {
-            await onExport(pages, background);
+            await onExport(pages, background, choosing ? layers : null);
           } catch (err) {
             alert(`Export failed: ${(err as Error).message}`);
             setBusy(false);
@@ -68,6 +77,29 @@ export function PdfExportDialog({
           </label>
           {range === 'custom' && invalid && <span className="field-error">Enter page numbers or ranges, like 1-3, 7.</span>}
         </fieldset>
+        {choosing && (
+          <fieldset className="field" disabled={busy}>
+            <legend>Layers</legend>
+            {layerNames.map((name) => (
+              <label key={name} className="check-row">
+                <input
+                  type="checkbox"
+                  checked={layers.has(name)}
+                  onChange={(e) =>
+                    setLayers((c) => {
+                      const next = new Set(c);
+                      if (e.target.checked) next.add(name);
+                      else next.delete(name);
+                      return next;
+                    })
+                  }
+                />
+                <span>{name}</span>
+              </label>
+            ))}
+            {!layers.size && <span className="field-error">Choose at least one layer.</span>}
+          </fieldset>
+        )}
         <label className="check-row">
           <input type="checkbox" checked={background} disabled={busy} onChange={(e) => setBackground(e.target.checked)} />
           <span>

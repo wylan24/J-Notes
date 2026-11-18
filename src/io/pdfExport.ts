@@ -16,6 +16,7 @@ import { LINK_PAD, LINK_TEXT_SIZE } from '../core/links';
 import { dabsByLevel, pencilAlpha, pencilDabs, type Dab } from '../core/pencil';
 import { PAPER_STYLES } from '../render/page';
 import { getBlob } from '../storage/db';
+import { contentByLayer } from '../core/layers';
 
 export interface PdfExportOptions {
   /** 0-based indices of the pages to export, in order. */
@@ -87,9 +88,12 @@ class ExportContext {
       }
     }
 
-    for (const it of page.items) if (!isOverItem(it)) await draw.within(it, () => this.item(draw, it));
-    for (const tool of ['highlighter', 'pen'] as const) for (const s of page.strokes) if (s.tool === tool) draw.stroke(s);
-    for (const it of page.items) if (isOverItem(it)) await draw.within(it, () => this.item(draw, it));
+    // Shown layers, bottom to top, each layered like the page on screen.
+    for (const { strokes, items } of contentByLayer(page)) {
+      for (const it of items) if (!isOverItem(it)) await draw.within(it, () => this.item(draw, it));
+      for (const tool of ['highlighter', 'pen'] as const) for (const s of strokes) if (s.tool === tool) draw.stroke(s);
+      for (const it of items) if (isOverItem(it)) await draw.within(it, () => this.item(draw, it));
+    }
   }
 
   private async item(draw: PageDrawer, it: PageItem): Promise<void> {

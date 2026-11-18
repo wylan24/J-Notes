@@ -72,6 +72,8 @@ export interface Stroke {
   rec?: string;
   /** Locked: the eraser and lasso pass over it. Absent when unlocked. */
   locked?: true;
+  /** The page layer it is on; absent for the page's base layer (see `layerOf`). */
+  layerId?: string;
 }
 
 /** An audio recording made in the notebook. The audio bytes live in the blob store. */
@@ -95,6 +97,8 @@ interface ItemBase {
   locked?: true;
   /** Turn about the box's centre, in radians (clockwise on screen). Absent for none. */
   rotation?: number;
+  /** The page layer it is on; absent for the page's base layer (see `layerOf`). */
+  layerId?: string;
 }
 
 /** Part of an image to show, as fractions (0..1) of the source image's width and height. */
@@ -247,7 +251,7 @@ export interface LineItem extends ItemBase {
 export type PageItem = TextItem | ImageItem | StickyItem | LinkItem | TapeItem | ShapeItem | LineItem;
 
 /** Page fields a `page.updated` op can change. An undefined value means the field is absent. */
-export type PagePatch = Partial<Pick<Page, 'template' | 'size' | 'paper' | 'background'>>;
+export type PagePatch = Partial<Pick<Page, 'template' | 'size' | 'paper' | 'background' | 'layers'>>;
 
 /** Fields an `items.updated` op can change. */
 export type ItemPatch = Partial<
@@ -285,6 +289,22 @@ export interface Page {
   strokes: Stroke[];
   /** Text boxes, images and sticky notes, in z-order. */
   items: PageItem[];
+  /**
+   * The page's layers, bottom to top. Absent on pages that have only ever had one layer;
+   * read them with `pageLayers`.
+   */
+  layers?: Layer[];
+}
+
+/**
+ * A layer of a page. Each layer's content is painted as a whole above the layers below it.
+ * Hidden layers are not drawn or exported; locked layers can't be drawn on or edited.
+ */
+export interface Layer {
+  id: string;
+  name: string;
+  hidden?: true;
+  locked?: true;
 }
 
 export function pageSize(page: Pick<Page, 'size'>): PageSize {
