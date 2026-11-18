@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { prepareCoverImage } from '../io/images';
 import { Icon } from './icons';
 
@@ -80,10 +80,13 @@ export function EditNotebookDialog({
   coverImage,
   onCancel,
   onSave,
+  children,
 }: {
   title: string;
   cover: string;
   coverImage: string | undefined;
+  /** More settings shown under the cover (the password lock). */
+  children?: ReactNode;
   onCancel: () => void;
   onSave: (title: string, cover: string, coverImage: string | undefined) => void;
 }) {
@@ -108,6 +111,7 @@ export function EditNotebookDialog({
           <input autoFocus value={name} onChange={(e) => setName(e.target.value)} />
         </label>
         <CoverPicker color={color} onColor={setColor} image={image} onImage={setImage} />
+        {children}
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={onCancel}>
             Cancel

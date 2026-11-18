@@ -223,6 +223,8 @@ export interface NotebookMeta {
   thumbnail?: string;
   /** A custom cover picture, as a small JPEG data URL; shown instead of the first page's thumbnail. */
   coverImage?: string;
+  /** Present when the notebook is locked with a password. A lock screen, not encryption. */
+  lock?: NotebookLock;
   /** The folder it is filed in; absent for the top level (and for notebooks from before folders). */
   folderId?: string;
   /**
@@ -230,6 +232,17 @@ export interface NotebookMeta {
    * with content or renamed.
    */
   quicknote?: true;
+}
+
+/** A salted, slow hash of a notebook's password. The notebook itself is stored unencrypted. */
+export interface NotebookLock {
+  kdf: 'PBKDF2-SHA256';
+  iterations: number;
+  /** base64 */
+  salt: string;
+  /** base64 */
+  hash: string;
+  hint?: string;
 }
 
 /** A library folder. Folders nest through `parentId`; null is the top level. */

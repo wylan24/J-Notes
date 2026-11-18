@@ -8,6 +8,8 @@ import { childFolders, countInFolder, effectiveFolder } from '../core/folders';
 import { NATURAL_DIR, normalizeLibraryPrefs, sortFolders, sortNotebooks, type LibraryPrefs, type SortKey } from '../core/librarySort';
 import { Breadcrumbs, FolderCard, FolderDialog, FolderPicker } from './Folders';
 import { COVERS, CoverPicker, EditNotebookDialog } from './CoverPicker';
+import { LockSection } from './Lock';
+import { relockAll } from '../core/lock';
 import { fromFile } from '../io/notebookFile';
 import { quicknoteTitle } from '../core/quicknote';
 import { editorClosed, sweepQuicknotes } from '../storage/quicknotes';
@@ -95,6 +97,8 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
         setItems(n);
       });
   useEffect(() => {
+    // Back in the library: notebooks unlocked in the editor are locked again.
+    relockAll();
     refresh();
     // Quick notes left empty in a tab that was closed rather than exited.
     void editorClosed()
@@ -342,7 +346,13 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
             <li key={n.id} className="card">
               <button className="cover" onClick={() => n.trashedAt === null && onOpen(n.id)} disabled={n.trashedAt !== null} aria-label={`Open ${n.title}`}>
                 <span className="spine" style={{ background: n.cover }} />
-                {n.coverImage || n.thumbnail ? (
+                {n.lock && (
+                  <span className="cover-lock" title="Locked">
+                    <Icon name="lock" />
+                  </span>
+                )}
+                {/* A locked notebook never shows its first page; a chosen cover picture is fine. */}
+                {n.coverImage || (n.thumbnail && !n.lock) ? (
                   <img src={n.coverImage ?? n.thumbnail} alt="" />
                 ) : (
                   <span className="cover-blank" style={{ background: n.cover }} />
@@ -413,7 +423,16 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
             void patch(editing.id, { title, cover, coverImage, ...(title !== editing.title ? { quicknote: undefined } : {}) });
             setEditing(null);
           }}
-        />
+        >
+          <LockSection
+            lock={editing.lock}
+            onChange={(lock) => {
+              // The lock is saved at once. Locking also drops the page thumbnail, which would show the notebook's content.
+              void patch(editing.id, lock ? { lock, thumbnail: undefined } : { lock: undefined });
+              setEditing({ ...editing, lock, ...(lock ? { thumbnail: undefined } : {}) });
+            }}
+          />
+        </EditNotebookDialog>
       )}
       {folderDialog && <FolderDialog folder={folderDialog.edit} onCancel={() => setFolderDialog(null)} onSave={(name, color) => void saveFolder(name, color)} />}
       {moving && (

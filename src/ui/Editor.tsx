@@ -7,6 +7,8 @@ import { appendPage, getBlobs, getMeta, listElements, loadDocument, putBlob, sav
 import { bookmarkedIndices, changeTemplateOp, clonePage, duplicatePageOp, insertPageOp, insertPagesOps, isBookmarked, pageBlobIds, toggleBookmarkOp } from '../core/pages';
 import { pagesFromFiles } from '../io/importPages';
 import { afterEditorClose, settleQuicknote } from '../storage/quicknotes';
+import { isUnlocked, markUnlocked } from '../core/lock';
+import { LockScreen } from './Lock';
 import { movePageOp } from '../core/ops';
 import { ChangeTemplateDialog, NotebookPickerDialog, PageMenuItems, type PageActionHandlers } from './PageActions';
 import { PageSidebar } from './PageSidebar';
@@ -107,6 +109,7 @@ const openEditors = new Map<string, number>();
 
 export function Editor({ id, onExit }: { id: string; onExit: () => void }) {
   const [state, setState] = useState<{ store: DocumentStore; meta: NotebookMeta; snapshotSeq: number } | { error: string } | null>(null);
+  const [unlocked, setUnlocked] = useState(() => isUnlocked(id));
 
   useEffect(() => {
     let cancelled = false;
@@ -131,6 +134,17 @@ export function Editor({ id, onExit }: { id: string; onExit: () => void }) {
           Back to library
         </button>
       </div>
+    );
+  if (state.meta.lock && !unlocked)
+    return (
+      <LockScreen
+        meta={state.meta}
+        onExit={onExit}
+        onUnlock={() => {
+          markUnlocked(id);
+          setUnlocked(true);
+        }}
+      />
     );
   return <EditorInner key={id} {...state} onExit={onExit} />;
 }
@@ -224,10 +238,12 @@ function EditorInner({
   useEffect(() => {
     let lastThumb = 0;
     const docId = store.doc.id;
+    // A locked notebook keeps no page thumbnail: it would show its content in the library.
+    const locked = !!initialMeta.lock;
     openEditors.set(docId, (openEditors.get(docId) ?? 0) + 1);
     const persister = new Persister(store, snapshotSeq, () => {
       // Refresh the library thumbnail at most every few seconds.
-      if (Date.now() - lastThumb < 3000 || !store.doc.pages[0]) return;
+      if (locked || Date.now() - lastThumb < 3000 || !store.doc.pages[0]) return;
       lastThumb = Date.now();
       void updateMeta(store.doc.id, { thumbnail: renderThumbnail(store.doc.pages[0], store.doc.id) });
     });
@@ -241,7 +257,7 @@ function EditorInner({
       window.removeEventListener('pagehide', flush);
       document.removeEventListener('visibilitychange', onVis);
       openEditors.set(docId, (openEditors.get(docId) ?? 1) - 1);
-      const thumbnail = store.doc.pages[0] ? renderThumbnail(store.doc.pages[0], docId) : undefined;
+      const thumbnail = store.doc.pages[0] && !locked ? renderThumbnail(store.doc.pages[0], docId) : undefined;
       afterEditorClose(
         (async () => {
           if (thumbnail) await updateMeta(docId, { thumbnail });
