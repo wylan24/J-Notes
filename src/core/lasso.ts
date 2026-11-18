@@ -6,7 +6,7 @@ import { selectInLasso, type Selection } from './selection';
 /** 'screenshot' drags a rectangle to capture as a picture rather than select. */
 export type LassoShape = 'freehand' | 'rect' | 'screenshot';
 
-/** What the lasso filter can limit a selection to. Text covers text boxes and sticky notes. */
+/** What the lasso filter can limit a selection to. Text covers text boxes and sticky notes; handwriting covers shapes and lines. */
 export type LassoKind = 'handwriting' | 'image' | 'text';
 export const LASSO_KINDS: readonly LassoKind[] = ['handwriting', 'image', 'text'];
 export const LASSO_LABELS: Record<LassoKind, string> = { handwriting: 'Handwriting', image: 'Images', text: 'Text' };
@@ -40,6 +40,7 @@ export function toggleLassoKind(kinds: readonly LassoKind[], k: LassoKind): Lass
 export function lassoAllowsItem(kinds: readonly LassoKind[], it: PageItem): boolean {
   if (it.kind === 'image') return kinds.includes('image');
   if (it.kind === 'text' || it.kind === 'sticky') return kinds.includes('text');
+  if (it.kind === 'shape' || it.kind === 'line') return kinds.includes('handwriting');
   return LASSO_KINDS.every((k) => kinds.includes(k));
 }
 

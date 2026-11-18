@@ -8,7 +8,7 @@ import { pagePaper, pageSize, type NotebookDoc, type Page, type PageItem, type S
 import { hexToRgb, placement, type Placement } from '../core/pdfPlacement';
 import { templateLayout } from '../core/templates';
 import { HIGHLIGHTER_ALPHA, steadied, strokeSvgPath } from '../render/stroke';
-import { isOverItem, LINK_COLOR } from '../render/items';
+import { isOverItem, LINK_COLOR, shapeInk } from '../render/items';
 import { fullImageBox, itemMatrix } from '../core/imageEdit';
 import { invert, isIdentity, multiply, type Matrix } from '../core/transform';
 import { LINK_PAD, LINK_TEXT_SIZE } from '../core/links';
@@ -113,6 +113,13 @@ class ExportContext {
       const font = await this.font('sans', false);
       const fit = encodable(font);
       draw.textLines([fit(it.label)], it.x + LINK_PAD, it.y + it.h / 2 - (LINK_TEXT_SIZE * LINE_HEIGHT) / 2, LINK_TEXT_SIZE, font, LINK_COLOR);
+      return;
+    }
+    // Shapes and lines: the fill, then the outline as the same vector ink the pen exports.
+    if (it.kind === 'shape' || it.kind === 'line') {
+      const { fill, strokes } = shapeInk(it);
+      if (fill && it.kind === 'shape' && it.fill) draw.polygon(fill, it.fill);
+      for (const s of strokes) draw.stroke(s);
       return;
     }
     // Tape exports covering what is under it, as on the page.
@@ -260,6 +267,15 @@ class PageDrawer {
     } finally {
       this.page.pushOperators(L.popGraphicsState());
     }
+  }
+
+  /** A filled polygon, in page units. */
+  polygon(pts: readonly { x: number; y: number }[], color: string): void {
+    if (pts.length < 3) return;
+    const f = (n: number) => Math.round(n * 100) / 100;
+    const d = pts.map((p, i) => `${i ? 'L' : 'M'}${f(p.x)} ${f(p.y)}`).join('') + 'Z';
+    const [x, y] = this.place.at(0, 0);
+    this.page.drawSvgPath(d, { x, y, scale: this.place.s, rotate: this.rotate, color: this.color(color) });
   }
 
   image(img: PDFImage, x: number, y: number, w: number, h: number): void {

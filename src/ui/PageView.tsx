@@ -7,8 +7,10 @@ import {
   type InputPoint,
   type CropRect,
   type ImageItem,
+  type LineItem,
   type LinkItem,
   type LinkTarget,
+  type ShapeItem,
   type Page,
   type PageItem,
   type PenStyle,
@@ -27,6 +29,8 @@ import { isScribble, scribbledStrokes } from '../core/scribble';
 import { inkKind, type InkKind } from '../core/contentKinds';
 import { CropOverlay } from './CropOverlay';
 import { SelectionMenu, type MenuAction } from './SelectionMenu';
+import { ShapeStyleRow } from './ShapeStyle';
+import { itemFromShape, touchesCircle } from '../core/shapeItems';
 import { animatedResolver, ensureGif, gifFrameIndex, isAnimated, isStatic } from '../render/gifs';
 import { screenshotRect, type Rect } from '../core/screenshot';
 import { cropPatch, flipPatch } from '../core/imageEdit';
@@ -90,6 +94,8 @@ export interface ToolState {
   text: TextStyle;
   /** Colour for new sticky notes. */
   stickyColor: string;
+  /** Fill for new shapes from the Shapes tool; null for none. */
+  shapeFill: string | null;
 }
 
 export type { Selection };
@@ -224,6 +230,8 @@ type Active =
       hits: Set<string>;
       /** Partial mode: original stroke id → its surviving pieces. */
       pieces: Map<string, Stroke[]>;
+      /** Shape and line items touched; they are erased whole in either mode. */
+      shapeHits: Set<string> | null;
       cursor: Vec;
       last: Vec;
     }
@@ -654,6 +662,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
         canErase: (s) => !s.locked && kinds.includes(inkKind(s)),
         hits: new Set(),
         pieces: new Map(),
+        shapeHits: kinds.includes('shapes') ? new Set() : null,
         cursor: pt,
         last: pt,
       };
@@ -714,6 +723,16 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
         }
       }
       if (changed) replaced.current = a.pieces;
+    }
+    if (a.shapeHits) {
+      for (const it of pageRef.current.items) {
+        if ((it.kind !== 'shape' && it.kind !== 'line') || it.locked || a.shapeHits.has(it.id)) continue;
+        if (pts.some((p) => touchesCircle(it, p, a.r))) {
+          a.shapeHits.add(it.id);
+          hiddenItems.current = a.shapeHits;
+          changed = true;
+        }
+      }
     }
     a.last = pts[pts.length - 1];
     if (changed) renderBase();
@@ -790,6 +809,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       if (a.kind === 'ink' && a.holdTimer) clearTimeout(a.holdTimer);
       hidden.current = null;
       replaced.current = null;
+      if (a.kind === 'erase' && a.shapeHits?.size) hiddenItems.current = null;
       if (a.kind === 'erase') renderBase();
       clearLive();
       if (follow.link) onFollowLink?.(follow.link.target);
@@ -819,12 +839,21 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
         // The Shapes tool also recognises on lift, without needing a hold.
         const shape = a.snap?.shape ?? (tool.kind === 'shapes' ? recognizeShape(a.stroke.points) : null);
         clearLiveOnNextBase.current = true;
+        // A recognised shape becomes a shape item. Highlighter lines stay highlighter ink, and shapes
+        // drawn during a recording stay ink so tapping them still plays the audio from there.
+        if (shape && a.stroke.tool === 'pen' && a.stroke.points[0]?.t === undefined) {
+          const fill = tool.kind === 'shapes' ? tool.shapeFill : null;
+          const item = itemFromShape(shape, { color: a.stroke.color, width: a.stroke.width, dash: a.stroke.dash ?? 'solid', fill });
+          store.dispatch([{ type: 'items.added', pageId: page.id, items: [item] }]);
+          return;
+        }
         store.dispatch([{ type: 'strokes.added', pageId: page.id, strokes: inkStrokes(a.stroke, shape) }]);
         return;
       }
     } else if (a.kind === 'erase') {
       hidden.current = null;
       replaced.current = null;
+      if (a.shapeHits?.size) hiddenItems.current = null;
       let ops: DocOp[] = [];
       if (commit && a.mode === 'stroke') {
         const op = removeStrokesOp(pageRef.current, a.hits);
@@ -832,6 +861,8 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       } else if (commit) {
         ops = replaceStrokesOps(pageRef.current, a.pieces);
       }
+      const itemOp = commit && a.shapeHits?.size ? removeItemsOp(pageRef.current, a.shapeHits) : null;
+      if (itemOp) ops.push(itemOp);
       if (ops.length) store.dispatch(ops);
       else renderBase();
     } else if (a.kind === 'laser') {
@@ -908,6 +939,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   };
 
   const selTexts = selected ? page.items.filter((it): it is TextItem => it.kind === 'text' && selected.itemIds.includes(it.id)) : [];
+  const selShapes = selected ? page.items.filter((it): it is ShapeItem | LineItem => (it.kind === 'shape' || it.kind === 'line') && selected.itemIds.includes(it.id)) : [];
 
   // --- Resize and rotate handles (lasso selections) ----------------------------------
   const pagePoint = (e: { clientX: number; clientY: number }): Vec => {
@@ -1054,7 +1086,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
         colors: selStrokes.map(() => color),
         previous: selStrokes.map((s) => s.color),
       });
-    for (const t of selTexts) {
+    for (const t of [...selTexts, ...selShapes]) {
       const op = updateItemOp(page, t.id, { color });
       if (op) ops.push(op);
     }
@@ -1127,7 +1159,9 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
           </button>
         ))}
       </>
-    ) : selStrokes.length > 0 || selTexts.length > 0 ? (
+    ) : soleItem?.kind === 'shape' || soleItem?.kind === 'line' ? (
+      <ShapeStyleRow item={soleItem} colors={selectionColors} onRecolor={recolorSelection} onPatch={patchSoleItem} />
+    ) : selStrokes.length > 0 || selTexts.length > 0 || selShapes.length > 0 ? (
       selectionColors.map((c) => (
         <button key={c} className="swatch-btn" aria-label={`Recolor ${c}`} onClick={() => recolorSelection(c)}>
           <span className="swatch" style={{ background: c }} />

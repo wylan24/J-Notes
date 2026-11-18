@@ -55,7 +55,7 @@ export function encodeClip(clip: Clip): string {
   return JSON.stringify(payload);
 }
 
-const ITEM_KINDS: ReadonlySet<PageItem['kind']> = new Set(['text', 'image', 'sticky', 'link', 'tape']);
+const ITEM_KINDS: ReadonlySet<PageItem['kind']> = new Set(['text', 'image', 'sticky', 'link', 'tape', 'shape', 'line']);
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object';
 

@@ -674,3 +674,6 @@ button:disabled { cursor: default; opacity: 0.35; }
 /* A region screenshot waiting for an action. */
 .shot-box { position: absolute; pointer-events: none; border: 1.5px dashed var(--accent); background: rgba(47, 111, 222, 0.06); box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.12); z-index: 2; }
 .sel-more.up { top: auto; bottom: calc(100% + 6px); }
+.swatch.no-fill { background: linear-gradient(to top right, #fff calc(50% - 1px), #d1342f calc(50% - 1px), #d1342f calc(50% + 1px), #fff calc(50% + 1px)); }
+.selection-menu button.active { background: rgba(255, 255, 255, 0.18); }
+.selection-menu .swatch-btn.active { background: none; }

@@ -1,4 +1,8 @@
-import type { ImageItem, LinkItem, PageItem, StickyItem, TapeItem, TextItem } from '../core/model';
+import type { ImageItem, InputPoint, LineItem, LinkItem, PageItem, ShapeItem, StickyItem, Stroke, TapeItem, TextItem } from '../core/model';
+import { lineStrokes, shapeOutline } from '../core/shapeItems';
+import { linePoints } from '../core/shapes';
+import { buildStrokePath } from './stroke';
+import type { Vec } from '../core/geometry';
 import { LINK_PAD, LINK_TEXT_SIZE } from '../core/links';
 import { fontFamily, LINE_HEIGHT, STICKY_ICON, STICKY_PAD, STICKY_TEXT_SIZE, TEXT_PAD, textLines, wrapLines, type MeasureText } from '../core/items';
 import { getBlob } from '../storage/db';
@@ -281,8 +285,58 @@ export function paintItems(ctx: CanvasRenderingContext2D, items: readonly PageIt
   }
 }
 
+// --- Shapes and lines ------------------------------------------------------------------------
+
+/** Points along a polyline, spaced as recognised-shape ink is, at even pressure. */
+function inkPoints(pts: readonly Vec[]): InputPoint[] {
+  const out: InputPoint[] = [];
+  for (let i = 1; i < pts.length; i++) out.push(...linePoints(pts[i - 1], pts[i]).slice(i > 1 ? 1 : 0));
+  return out.length ? out : pts.map((p) => ({ x: p.x, y: p.y, p: 0.5 }));
+}
+
+/**
+ * What a shape or line draws, in its unturned frame: the area to fill (closed shapes with a fill),
+ * and its outline as strokes in the pen engine, so it looks like recognised-shape ink and exports
+ * the same way.
+ */
+export function shapeInk(it: ShapeItem | LineItem): { fill: Vec[] | null; strokes: Stroke[] } {
+  const style = { id: it.id, tool: 'pen' as const, color: it.color, width: it.width, simulatePressure: false, shape: true, ...(it.dash ? { dash: it.dash } : {}) };
+  if (it.kind === 'line') return { fill: null, strokes: lineStrokes(it).map((pts) => ({ ...style, points: inkPoints(pts) })) };
+  const outline = shapeOutline(it);
+  return { fill: it.fill ? outline : null, strokes: [{ ...style, points: inkPoints(outline) }] };
+}
+
+// Items are immutable (ops replace them), so their drawn paths are cached by identity.
+const shapePaths = new WeakMap<PageItem, { fill: Path2D | null; ink: Path2D }>();
+
+function paintShape(ctx: CanvasRenderingContext2D, it: ShapeItem | LineItem) {
+  let p = shapePaths.get(it);
+  if (!p) {
+    const { fill, strokes } = shapeInk(it);
+    let fillPath: Path2D | null = null;
+    if (fill) {
+      fillPath = new Path2D();
+      fill.forEach((q, i) => (i ? fillPath!.lineTo(q.x, q.y) : fillPath!.moveTo(q.x, q.y)));
+      fillPath.closePath();
+    }
+    const ink = new Path2D();
+    for (const s of strokes) ink.addPath(buildStrokePath(s.points, s, true));
+    p = { fill: fillPath, ink };
+    shapePaths.set(it, p);
+  }
+  ctx.save();
+  if (p.fill && it.kind === 'shape' && it.fill) {
+    ctx.fillStyle = it.fill;
+    ctx.fill(p.fill);
+  }
+  ctx.fillStyle = it.color;
+  ctx.fill(p.ink);
+  ctx.restore();
+}
+
 function paintItem(ctx: CanvasRenderingContext2D, it: PageItem, opts: ItemPaintOptions) {
   if (it.kind === 'image') paintImage(ctx, it, opts.images);
+  else if (it.kind === 'shape' || it.kind === 'line') paintShape(ctx, it);
   else if (it.kind === 'text') paintText(ctx, it);
   else if (it.kind === 'link') paintLink(ctx, it);
   else if (it.kind === 'tape') paintTape(ctx, it, !!opts.revealed?.has(it.id));

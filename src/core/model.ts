@@ -149,14 +149,64 @@ export interface TapeItem extends ItemBase {
   color: string;
 }
 
-export type PageItem = TextItem | ImageItem | StickyItem | LinkItem | TapeItem;
+/** A point as fractions (0..1) of an item's box: x of its width, y of its height. */
+export interface BoxPoint {
+  x: number;
+  y: number;
+}
+
+/** Closed shapes. Triangles and other many-sided shapes are polygons. */
+export type ShapeKind = 'rect' | 'ellipse' | 'polygon';
+
+/**
+ * A shape: drawn with the Shapes tool, or ink recognised as one. Its outline is drawn like a pen
+ * stroke of `width`, so it looks like the ink it came from.
+ */
+export interface ShapeItem extends ItemBase {
+  kind: 'shape';
+  shape: ShapeKind;
+  /** A polygon's corners, in order, as fractions of the box. Absent for other shapes. */
+  points?: BoxPoint[];
+  /** Outline colour. */
+  color: string;
+  /** Outline width, page units. */
+  width: number;
+  /** Dashed or dotted outline; absent for solid. */
+  dash?: Exclude<DashStyle, 'solid'>;
+  /** Fill colour; absent for none. */
+  fill?: string;
+  /** A rectangle's corner radius, page units; absent for square corners. */
+  radius?: number;
+}
+
+/** Arrowheads on a line: at its end, its start, or both. Absent for none. */
+export type ArrowEnds = 'end' | 'start' | 'both';
+
+/** A straight line or arrow. Its two ends are stored as fractions of its box, so moving and scaling the box carries them. */
+export interface LineItem extends ItemBase {
+  kind: 'line';
+  /** Start and end, as fractions of the box. */
+  ends: [BoxPoint, BoxPoint];
+  color: string;
+  width: number;
+  dash?: Exclude<DashStyle, 'solid'>;
+  arrow?: ArrowEnds;
+}
+
+export type PageItem = TextItem | ImageItem | StickyItem | LinkItem | TapeItem | ShapeItem | LineItem;
 
 /** Page fields a `page.updated` op can change. An undefined value means the field is absent. */
 export type PagePatch = Partial<Pick<Page, 'template' | 'size' | 'paper' | 'background'>>;
 
 /** Fields an `items.updated` op can change. */
 export type ItemPatch = Partial<
-  Omit<TextItem, 'id' | 'kind'> & Omit<ImageItem, 'id' | 'kind'> & Omit<StickyItem, 'id' | 'kind'> & Omit<LinkItem, 'id' | 'kind'> & Omit<TapeItem, 'id' | 'kind'>
+  Omit<TextItem, 'id' | 'kind'> &
+    Omit<ImageItem, 'id' | 'kind'> &
+    Omit<StickyItem, 'id' | 'kind'> &
+    Omit<LinkItem, 'id' | 'kind'> &
+    Omit<TapeItem, 'id' | 'kind'> &
+    Omit<ShapeItem, 'id' | 'kind'> &
+    Omit<LineItem, 'id' | 'kind'>
 >;
 
 /** A custom template: an image in the notebook's blob store, fitted to the page under the template lines. */

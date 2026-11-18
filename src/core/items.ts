@@ -3,6 +3,7 @@
 import { DEFAULT_PAGE_SIZE, type ImageItem, type PageSize, type Page, type PageItem, type StickyItem, type TextItem } from './model';
 import type { Bounds, Vec } from './geometry';
 import { newId } from './ids';
+import { lineBounds, pointOnLine } from './shapeItems';
 
 export type MeasureText = (s: string) => number;
 
@@ -72,9 +73,12 @@ export function itemRect(it: PageItem): Bounds {
   return { minX: it.x, minY: it.y, maxX: it.x + w, maxY: it.y + h };
 }
 
-/** Photos, text boxes and open sticky notes turn; links, tape and collapsed notes stay square to the page. */
+/**
+ * Photos, text boxes, shapes and open sticky notes turn; links, tape and collapsed notes stay square
+ * to the page. Lines have no turn of their own: turning one moves its ends.
+ */
 export function canRotate(it: PageItem): boolean {
-  return it.kind === 'image' || it.kind === 'text' || (it.kind === 'sticky' && !it.collapsed);
+  return it.kind === 'image' || it.kind === 'text' || it.kind === 'shape' || (it.kind === 'sticky' && !it.collapsed);
 }
 
 /** The item's rotation as drawn: zero for kinds that don't turn. */
@@ -90,6 +94,7 @@ export function normalizeRotation(theta: number): number | undefined {
 
 /** The axis-aligned box around the item as drawn, rotation included. */
 export function itemBounds(it: PageItem): Bounds {
+  if (it.kind === 'line') return lineBounds(it);
   const r = itemRect(it);
   const theta = itemRotation(it);
   if (!theta) return r;
@@ -102,6 +107,7 @@ export function itemBounds(it: PageItem): Bounds {
 
 /** Whether `pt` is on the item as drawn (inside its turned box). */
 export function pointOnItem(it: PageItem, pt: Vec): boolean {
+  if (it.kind === 'line') return pointOnLine(it, pt);
   const r = itemRect(it);
   const theta = itemRotation(it);
   let { x, y } = pt;
@@ -177,6 +183,11 @@ export function resizeItem<T extends PageItem>(it: T, w: number, h: number, meas
     case 'link':
     case 'tape':
       return { ...it, w: Math.max(16, w), h: Math.max(16, h) };
+    case 'shape':
+      return { ...it, w: Math.max(8, w), h: Math.max(8, h) };
+    case 'line':
+      // A side the line has no extent along (a level or upright line) stays that way.
+      return { ...it, w: it.w ? Math.max(4, w) : 0, h: it.h ? Math.max(4, h) : 0 };
     default:
       return { ...it, w: Math.max(60, w), h: Math.max(60, h) };
   }

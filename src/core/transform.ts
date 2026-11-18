@@ -3,6 +3,7 @@ import type { InputPoint, ItemPatch, Page, PageItem, Stroke } from './model';
 import type { Bounds, Vec } from './geometry';
 import { canRotate, itemBounds, normalizeRotation, STICKY_ICON } from './items';
 import { updateItemOp, type DocOp } from './ops';
+import { lineEnds, lineGeometry } from './shapeItems';
 import { selectedItems, selectedStrokes, type Selection } from './selection';
 
 /** [a, b, c, d, e, f], as in canvas `setTransform`: x' = a·x + c·y + e, y' = b·x + d·y + f. */
@@ -94,6 +95,11 @@ export function transformItem<T extends PageItem>(it: T, m: Matrix): T {
 }
 
 function itemPatch(it: PageItem, m: Matrix): ItemPatch {
+  // A line's ends go where the transform takes them, which also turns it.
+  if (it.kind === 'line') {
+    const [a, b] = lineEnds(it).map((p) => applyMatrix(m, p));
+    return { ...lineGeometry(a, b), width: it.width * matrixScale(m) };
+  }
   const b = itemBounds(it);
   const c = applyMatrix(m, { x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 });
   if (it.kind === 'sticky' && it.collapsed) return { x: c.x - STICKY_ICON / 2, y: c.y - STICKY_ICON / 2 };
@@ -102,6 +108,10 @@ function itemPatch(it: PageItem, m: Matrix): ItemPatch {
   const h = it.h * k;
   const patch: ItemPatch = { x: c.x - w / 2, y: c.y - h / 2, w, h };
   if (it.kind === 'text') patch.size = it.size * k;
+  if (it.kind === 'shape') {
+    patch.width = it.width * k;
+    if (it.radius !== undefined) patch.radius = it.radius * k;
+  }
   const turn = rotationAngle(m);
   if (canRotate(it) && Math.abs(turn) > 1e-9) patch.rotation = normalizeRotation((it.rotation ?? 0) + turn);
   return patch;

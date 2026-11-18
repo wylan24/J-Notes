@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { FILL_COLORS, NoFillSwatch } from './ShapeStyle';
 import { pageIndexAt, pageOffsets, pageSize, type DashStyle, type EraseMode, type ScrollDirection, type InkTool, type LinkItem, type LinkTarget, type NotebookMeta, type OutlineEntry, type PenStyle, type Template, type ToolKind } from '../core/model';
 import { newId } from '../core/ids';
 import { DocumentStore } from '../core/store';
@@ -100,7 +101,8 @@ const TOOLS: { kind: ToolKind; label: string; key: string }[] = [
 interface InkSettings {
   pen: { color: string; width: number; style: PenStyle; sharpness: number; dash: DashStyle; stabilise: number };
   highlighter: { color: string; width: number; straight: boolean; stabilise: number };
-  shapes: { color: string; width: number; dash: DashStyle; stabilise: number };
+  /** `fill` colours new closed shapes; null for none. */
+  shapes: { color: string; width: number; dash: DashStyle; stabilise: number; fill: string | null };
 }
 interface EraserSettings {
   size: number;
@@ -112,7 +114,7 @@ interface EraserSettings {
 const DEFAULT_INK: InkSettings = {
   pen: { color: PEN_COLORS[0], width: WIDTHS.pen[1], style: 'fountain', sharpness: 0.5, dash: 'solid', stabilise: DEFAULT_STABILISE },
   highlighter: { color: HIGHLIGHT_COLORS[0], width: WIDTHS.highlighter[1], straight: false, stabilise: DEFAULT_STABILISE },
-  shapes: { color: PEN_COLORS[0], width: WIDTHS.shapes[1], dash: 'solid', stabilise: DEFAULT_STABILISE },
+  shapes: { color: PEN_COLORS[0], width: WIDTHS.shapes[1], dash: 'solid', stabilise: DEFAULT_STABILISE, fill: null },
 };
 const DEFAULT_ERASER: EraserSettings = { size: ERASER_SIZES[1], mode: 'stroke', kinds: [...INK_KINDS] };
 
@@ -466,6 +468,7 @@ function EditorInner({
     stickyColor,
     tapeColor,
     scribbleErase,
+    shapeFill: ink.shapes.fill,
   };
 
   // --- Ruler and zoom window --------------------------------------------------------------
@@ -1419,6 +1422,30 @@ function EditorInner({
                   onClick={() => setDash(inkTool, dash)}
                 >
                   <Icon name={`line-${dash}`} />
+                </button>
+              ))}
+            </>
+          )}
+          {inkTool === 'shapes' && (
+            <>
+              <span className="divider" />
+              <span className="tool-hint" title="Fill for new shapes">Fill</span>
+              <button
+                className={`swatch-btn ${!ink.shapes.fill ? 'active' : ''}`}
+                aria-label="No fill"
+                title="No fill"
+                onClick={() => setInk((v) => ({ ...v, shapes: { ...v.shapes, fill: null } }))}
+              >
+                <NoFillSwatch />
+              </button>
+              {FILL_COLORS.map((c) => (
+                <button
+                  key={c}
+                  className={`swatch-btn ${ink.shapes.fill === c ? 'active' : ''}`}
+                  aria-label={`Fill ${c}`}
+                  onClick={() => setInk((v) => ({ ...v, shapes: { ...v.shapes, fill: c } }))}
+                >
+                  <span className="swatch" style={{ background: c }} />
                 </button>
               ))}
             </>
