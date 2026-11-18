@@ -12,6 +12,7 @@ import { LockScreen } from './Lock';
 import { movePageOp, removeItemsOp, updateItemOp } from '../core/ops';
 import { LINK_PAD, LINK_TEXT_SIZE, linkLabel, newLink, pastedUrl, pushBack, type BackEntry } from '../core/links';
 import { LinkDialog } from './LinkDialog';
+import { usePresenter } from './usePresenter';
 import { ChangeTemplateDialog, NotebookPickerDialog, PageMenuItems, type PageActionHandlers } from './PageActions';
 import { PageSidebar, type SidebarTab } from './PageSidebar';
 import { OutlinePanel } from './OutlinePanel';
@@ -786,6 +787,13 @@ function EditorInner({
     highlightTimer.current = setTimeout(() => setSearchHit((h) => (h?.pageId === entry.pageId ? null : h)), 1600);
   };
 
+  // --- Presenting --------------------------------------------------------------------------
+  const presenter = usePresenter(store, meta.title, doc.pages[currentPage]?.id);
+  const startPresenting = () => {
+    presenter.start();
+    if (!readOnly) setToolKind('laser'); // the laser is what you'll want in front of an audience
+  };
+
   // --- Links ---------------------------------------------------------------------------------
   const [linkDialog, setLinkDialog] = useState<{ sel: Selection; link: LinkItem | null } | null>(null);
   /** Where page links were followed from, for Back. */
@@ -1102,6 +1110,15 @@ function EditorInner({
           >
             <Icon name="bookmark" />
           </button>
+          {presenter.presenting ? (
+            <button className="presenting-chip" onClick={presenter.stop} title="Stop presenting and close the presentation window">
+              Presenting · Stop
+            </button>
+          ) : (
+            <button className="icon-btn" onClick={startPresenting} aria-label="Present" title="Present in a second window (drag it to a projector or another screen)">
+              <Icon name="present" />
+            </button>
+          )}
           <button
             className={`icon-btn ${readOnly ? 'active' : ''}`}
             onClick={() => setReadOnly(!readOnly)}
@@ -1351,6 +1368,7 @@ function EditorInner({
               onAddToOutline={addSelectionToOutline}
               onFollowLink={followLink}
               readOnly={readOnly}
+              onLaser={presenter.presenting ? presenter.sendLaser : undefined}
               onEditLink={(sel, link) => setLinkDialog({ sel, link })}
               playback={playback}
               onSeekInk={audioOpen && recState === 'idle' && recordings.length ? seekInk : undefined}

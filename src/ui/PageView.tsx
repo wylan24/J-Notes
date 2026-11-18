@@ -16,6 +16,7 @@ import {
 } from '../core/model';
 import { FONTS, fontFamily, itemAt, LINE_HEIGHT, newSticky, newText, resizeItem, STICKY_PAD, STICKY_TEXT_SIZE, TEXT_PAD, textHeight, type FontKey, type TextStyle } from '../core/items';
 import { newId } from '../core/ids';
+import { LASER_FADE_MS, paintLaser, type LaserPoint } from '../render/laser';
 import { linkAt, TAP_MS, TAP_SLOP_PX } from '../core/links';
 import { pointsLength, strokeHitsCircle, type Vec } from '../core/geometry';
 import { edgeNear, mapEdge, projectToEdge, type Edge } from '../core/ruler';
@@ -89,6 +90,8 @@ interface Props {
   onEditLink?: (sel: Selection, link: LinkItem | null) => void;
   /** Read-only: no tool does anything; a tap follows a link (or seeks recorded audio) and nothing else. */
   readOnly?: boolean;
+  /** Laser points as they are drawn (page units), for a presentation window; head null when the pen lifts. */
+  onLaser?: (pageId: string, points: Vec[], head: Vec | null) => void;
   /** An audio recording playing at time `t` (ms): its ink that hasn't been reached yet is drawn faded. */
   playback?: { rec: string; t: number } | null;
   /** When set, tapping ink written during a recording plays the audio from there instead of using the tool. */
@@ -121,8 +124,6 @@ const RULER_REACH_PX = 28;
 
 /** A point moved onto the ruler edge, with the ink just touching it. Pressure and timestamp are kept. */
 const onRuler = (p: InputPoint, e: Edge, width: number): InputPoint => ({ ...p, ...projectToEdge(p, e, width / 2) });
-const LASER_FADE_MS = 700;
-const LASER_COLOR = '#ff3b30';
 
 /**
  * After snapping, lines and arrows keep their start and follow the pen with their end;
@@ -156,9 +157,6 @@ function inkStrokes(stroke: Stroke, shape: Shape | null): Stroke[] {
   return shapePaths(shape).map((points, i) => ({ ...stroke, id: i ? newId() : stroke.id, points: stampShape(points, t), simulatePressure: false, shape: true }));
 }
 
-interface LaserPoint extends Vec {
-  t: number;
-}
 
 type Active =
   | {
@@ -191,40 +189,7 @@ type Active =
   | { kind: 'lasso'; pointerId: number; poly: Vec[] }
   | { kind: 'laser'; pointerId: number; cursor: Vec };
 
-/** A fading glowing trail; older segments are more transparent. */
-function paintLaser(ctx: CanvasRenderingContext2D, trail: LaserPoint[], now: number, scale: number, head: Vec | null) {
-  ctx.save();
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.strokeStyle = LASER_COLOR;
-  ctx.shadowColor = LASER_COLOR;
-  ctx.shadowBlur = 10;
-  ctx.lineWidth = 4 / scale;
-  for (let i = 1; i < trail.length; i++) {
-    const a = trail[i - 1];
-    const b = trail[i];
-    ctx.globalAlpha = Math.max(0, 1 - (now - b.t) / LASER_FADE_MS);
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
-    ctx.stroke();
-  }
-  if (head) {
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = LASER_COLOR;
-    ctx.beginPath();
-    ctx.arc(head.x, head.y, 6 / scale, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = '#fff';
-    ctx.beginPath();
-    ctx.arc(head.x, head.y, 2.5 / scale, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.restore();
-}
-
-export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, onAddToOutline, onFollowLink, onEditLink, readOnly, playback, onSeekInk, highlights }: Props) {
+export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, onAddToOutline, onFollowLink, onEditLink, readOnly, onLaser, playback, onSeekInk, highlights }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const baseRef = useRef<HTMLCanvasElement>(null);
   const liveRef = useRef<HTMLCanvasElement>(null);
@@ -592,6 +557,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     } else if (tool.kind === 'laser') {
       active.current = { kind: 'laser', pointerId: e.pointerId, cursor: pt };
       laserTrail.current.push({ ...pt, t: performance.now() });
+      onLaser?.(page.id, [pt], pt);
     } else {
       active.current = { kind: 'lasso', pointerId: e.pointerId, poly: [pt] };
     }
@@ -696,6 +662,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       const t = performance.now();
       a.cursor = pts[pts.length - 1];
       laserTrail.current.push(...pts.map((p) => ({ x: p.x, y: p.y, t })));
+      onLaser?.(page.id, pts.map((p) => ({ x: p.x, y: p.y })), a.cursor);
     } else {
       a.poly.push(...pts);
     }
@@ -742,6 +709,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       if (ops.length) store.dispatch(ops);
       else renderBase();
     } else if (a.kind === 'laser') {
+      onLaser?.(page.id, [], null);
       scheduleLive(); // let the trail fade out instead of clearing it
       return;
     } else if (a.kind === 'lasso' && commit) {

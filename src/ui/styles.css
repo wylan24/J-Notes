@@ -572,3 +572,11 @@ button:disabled { cursor: default; opacity: 0.35; }
 /* ---------- Read-only ---------- */
 .read-only-chip { font-size: 13px; color: var(--muted); padding: 6px 12px; border-radius: 999px; background: var(--surface-2); white-space: nowrap; }
 .page-layer.live.read-only { cursor: default; }
+
+/* ---------- Presentation window ---------- */
+.presentation { position: fixed; inset: 0; background: #000; overflow: hidden; cursor: none; }
+.presentation-page { position: absolute; }
+.presentation-page canvas { position: absolute; inset: 0; display: block; }
+.presentation-msg { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; color: #9a9a9f; font-size: 18px; cursor: default; }
+.presenting-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: #fff; background: #d63a2f; border: 0; border-radius: 999px; padding: 5px 10px; cursor: pointer; }
+.presenting-chip::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: #fff; }
