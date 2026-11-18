@@ -3,7 +3,8 @@ import type { Page, PageItem } from './model';
 import type { Vec } from './geometry';
 import { selectInLasso, type Selection } from './selection';
 
-export type LassoShape = 'freehand' | 'rect';
+/** 'screenshot' drags a rectangle to capture as a picture rather than select. */
+export type LassoShape = 'freehand' | 'rect' | 'screenshot';
 
 /** What the lasso filter can limit a selection to. Text covers text boxes and sticky notes. */
 export type LassoKind = 'handwriting' | 'image' | 'text';
@@ -20,6 +21,7 @@ export const DEFAULT_LASSO: LassoSettings = { shape: 'freehand', kinds: [...LASS
 
 export function normalizeLassoSettings(raw: unknown): LassoSettings {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Partial<Record<keyof LassoSettings, unknown>>;
+  // Screenshot mode is for the moment; the lasso comes back as a freehand lasso.
   const shape: LassoShape = r.shape === 'rect' ? 'rect' : 'freehand';
   const kinds = Array.isArray(r.kinds) ? LASSO_KINDS.filter((k) => (r.kinds as unknown[]).includes(k)) : [];
   return { shape, kinds: kinds.length ? kinds : [...LASSO_KINDS] };
@@ -55,7 +57,7 @@ export function rectPolygon(a: Vec, b: Vec): Vec[] {
   ];
 }
 
-/** The area the lasso encloses, from the pointer path: the path itself, or the rectangle from its first to its last point. */
+/** The area the lasso encloses, from the pointer path: the path itself, or (rectangle and screenshot) the rectangle from its first to its last point. */
 export function lassoPolygon(shape: LassoShape, path: readonly Vec[]): Vec[] {
   if (shape === 'freehand' || path.length < 2) return [...path];
   return rectPolygon(path[0], path[path.length - 1]);

@@ -32,7 +32,8 @@ import { SearchPanel, type SearchHit } from './SearchPanel';
 import { PdfExportDialog } from './PdfExportDialog';
 import type { CustomTemplate } from './TemplateGrid';
 import { Persister, type SaveStatus } from '../storage/persister';
-import { downloadBlob, exportPagePng, renderContentThumbnail, renderThumbnail } from '../render/page';
+import { downloadBlob, exportPagePng, renderContentThumbnail, renderRegionPng, renderThumbnail } from '../render/page';
+import { screenshotImage, type Rect } from '../core/screenshot';
 import { imageResolver, measurer, primeImage } from '../render/items';
 import { isImageFile, prepareImage } from '../io/images';
 import { FONTS, newImage, type FontKey, type TextStyle } from '../core/items';
@@ -709,6 +710,34 @@ function EditorInner({
       setNotice(cut ? 'Cut' : 'Copied');
     }
     if (cut) removeSelection(sel);
+  };
+
+  /** A region screenshot: a new photo on the same page, the clipboard, or a PNG download. */
+  const takeScreenshot = async (pageId: string, rect: Rect, action: 'insert' | 'copy' | 'save') => {
+    const page = store.doc.pages.find((p) => p.id === pageId);
+    if (!page) return;
+    const png = renderRegionPng(page, store.doc.id, rect);
+    try {
+      if (action === 'copy') {
+        // The promise goes straight into the ClipboardItem so Safari still counts the tap as the gesture.
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': png.then((b) => b ?? Promise.reject(new Error('no image'))) })]);
+        setNotice('Screenshot copied');
+        return;
+      }
+      const blob = await png;
+      if (!blob) throw new Error('could not draw the region');
+      if (action === 'save') {
+        downloadBlob(blob, `${meta.title || 'Notebook'} screenshot.png`);
+        return;
+      }
+      const blobId = newId();
+      await putBlob({ docId: store.doc.id, id: blobId, type: 'image/png', bytes: await blob.arrayBuffer() });
+      const item = screenshotImage(blobId, rect, pageSize(page));
+      store.dispatch([{ type: 'items.added', pageId, items: [item] }]);
+      setSelection({ pageId, strokeIds: [], itemIds: [item.id] });
+    } catch (e) {
+      alert(`Could not take the screenshot: ${(e as Error).message}`);
+    }
   };
 
   /** Paste a clip centred in view, as a new selection. Its photos are copied into this notebook first. */
@@ -1525,9 +1554,16 @@ function EditorInner({
               </button>
               <span className="divider" />
               <div className="segmented" role="radiogroup" aria-label="Lasso shape">
-                {(['freehand', 'rect'] as LassoShape[]).map((m) => (
-                  <button key={m} role="radio" aria-checked={lasso.shape === m} className={lasso.shape === m ? 'active' : ''} onClick={() => setLasso({ ...lasso, shape: m })}>
-                    {m === 'freehand' ? 'Freehand' : 'Rectangle'}
+                {(['freehand', 'rect', 'screenshot'] as LassoShape[]).map((m) => (
+                  <button
+                    key={m}
+                    role="radio"
+                    aria-checked={lasso.shape === m}
+                    className={lasso.shape === m ? 'active' : ''}
+                    title={m === 'screenshot' ? 'Drag a rectangle to capture it as a picture' : undefined}
+                    onClick={() => setLasso({ ...lasso, shape: m })}
+                  >
+                    {m === 'freehand' ? 'Freehand' : m === 'rect' ? 'Rectangle' : 'Screenshot'}
                   </button>
                 ))}
               </div>
@@ -1715,6 +1751,7 @@ function EditorInner({
               rulerEdges={ruler ? rulerEdgesClient : undefined}
               onSaveElement={(sel) => void saveAsElement(sel)}
               onCopy={(sel, cut) => void copySelection(sel, cut)}
+              onScreenshot={(pageId, rect, action) => void takeScreenshot(pageId, rect, action)}
               onAddToOutline={addSelectionToOutline}
               onScribbleErase={(n) => setNotice(`Scribbled out ${n} ${n === 1 ? 'stroke' : 'strokes'} · Undo brings ${n === 1 ? 'it' : 'them'} back`)}
               revealed={revealed}

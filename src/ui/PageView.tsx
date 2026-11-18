@@ -26,6 +26,7 @@ import { newTape, tapeAt, tapeRect } from '../core/tape';
 import { isScribble, scribbledStrokes } from '../core/scribble';
 import { inkKind, type InkKind } from '../core/contentKinds';
 import { CropOverlay } from './CropOverlay';
+import { screenshotRect, type Rect } from '../core/screenshot';
 import { cropPatch, flipPatch } from '../core/imageEdit';
 import { canRotate, itemRotation } from '../core/items';
 import { snapMove, snapTargets, type SnapGuide, type SnapTargets } from '../core/snap';
@@ -109,6 +110,8 @@ interface Props {
   stickyColors: string[];
   /** Save the lasso selection to the elements library. */
   onSaveElement?: (sel: Selection) => void;
+  /** A region screenshot was taken: add it to the page as a photo, copy it, or save it as a PNG. */
+  onScreenshot?: (pageId: string, rect: Rect, action: 'insert' | 'copy' | 'save') => void;
   /** Copy the selection to the clipboard, removing it with `cut`. */
   onCopy?: (sel: Selection, cut: boolean) => void;
   /** Add the selection's area to the notebook's outline. */
@@ -227,7 +230,7 @@ type Active =
   | { kind: 'laser'; pointerId: number; cursor: Vec }
   | { kind: 'tape'; pointerId: number; start: Vec; cur: Vec };
 
-export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, onCopy, onAddToOutline, onFollowLink, onEditLink, readOnly, onLaser, onSample, revealed, onToggleTape, onScribbleErase, playback, onSeekInk, highlights }: Props) {
+export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, onScreenshot, onCopy, onAddToOutline, onFollowLink, onEditLink, readOnly, onLaser, onSample, revealed, onToggleTape, onScribbleErase, playback, onSeekInk, highlights }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const baseRef = useRef<HTMLCanvasElement>(null);
   const liveRef = useRef<HTMLCanvasElement>(null);
@@ -254,6 +257,8 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   const [guides, setGuides] = useState<SnapGuide[]>([]);
   // Cropping a photo: the photo is hidden on the canvas while the crop overlay shows all of it.
   const [cropping, setCroppingState] = useState<ImageItem | null>(null);
+  // A captured screenshot region waiting for the person to choose what to do with it.
+  const [shot, setShot] = useState<Rect | null>(null);
   // Mirror for the rAF painter, which must never see a stale closure.
   const dragRef = useRef<{ m: Matrix; ids: string[] } | null>(null);
   // Resize (corner handles) or rotate (top handle) of a lasso selection in progress.
@@ -560,6 +565,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     if (ignoreTouch(e) || active.current) return;
     e.preventDefault();
     if (selection) setSelection(null);
+    if (shot) setShot(null);
     const pt = toPage(e, e.pointerType);
     if (editingRef.current) {
       // Tapping away ends editing; with the Text or Sticky tool that tap does nothing else.
@@ -804,6 +810,8 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       onLaser?.(page.id, [], null);
       scheduleLive(); // let the trail fade out instead of clearing it
       return;
+    } else if (a.kind === 'lasso' && commit && tool.lassoShape === 'screenshot') {
+      setShot(screenshotRect(a.path[0], a.path[a.path.length - 1], size));
     } else if (a.kind === 'lasso' && commit) {
       // A tap (rather than a loop) selects the item under it.
       const p = unlockedContent(pageRef.current);
@@ -1115,6 +1123,30 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
             }
           />
         ))}
+      {shot && (
+        <>
+          <div className="shot-box" style={{ left: shot.x * scale, top: shot.y * scale, width: shot.w * scale, height: shot.h * scale }} />
+          <div
+            className="selection-menu"
+            data-no-gesture
+            style={{ left: shot.x * scale, top: shot.y * scale >= 56 ? shot.y * scale - 52 : (shot.y + shot.h) * scale + 12 }}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            {(['insert', 'copy', 'save'] as const).map((action) => (
+              <button
+                key={action}
+                onClick={() => {
+                  onScreenshot?.(page.id, shot, action);
+                  setShot(null);
+                }}
+              >
+                {action === 'insert' ? 'Add as photo' : action === 'copy' ? 'Copy' : 'Save PNG'}
+              </button>
+            ))}
+            <button onClick={() => setShot(null)}>Cancel</button>
+          </div>
+        </>
+      )}
       {cropping && <CropOverlay item={cropping} scale={scale} image={images(cropping.blobId)} onDone={endCrop} onCancel={() => endCrop(null)} />}
       {selBounds && (
         <>

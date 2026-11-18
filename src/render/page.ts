@@ -204,6 +204,20 @@ export async function exportPagePng(page: Page, docId: string, filename: string)
   if (blob) downloadBlob(blob, filename);
 }
 
+/** Part of a page (`rect`, in page units) as a PNG at `scale`× with its photos and PDF background loaded first. */
+export async function renderRegionPng(page: Page, docId: string, rect: { x: number; y: number; w: number; h: number }, scale = 2): Promise<Blob | null> {
+  const bg = page.background;
+  const blobIds = page.items.flatMap((it) => (it.kind === 'image' ? [it.blobId] : []));
+  if (bg?.kind === 'image') blobIds.push(bg.blobId);
+  await Promise.all([
+    ...blobIds.map((id) => ensureImage(docId, id)),
+    ...(bg?.kind === 'pdf' ? [ensurePdfRaster(docId, bg, pageSize(page), scale)] : []),
+  ]);
+  const canvas = document.createElement('canvas');
+  paintRegion(canvas, page, rect, rect.w * scale, rect.h * scale, 1, { items: { images: imageResolver(docId) }, pdf: pdfResolver(docId) });
+  return new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/png'));
+}
+
 export function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
