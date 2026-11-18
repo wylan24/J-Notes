@@ -34,7 +34,7 @@ export type Paper = 'white' | 'yellow' | 'dark';
 export const DEFAULT_PAPER: Paper = 'white';
 
 export type InkTool = 'pen' | 'highlighter';
-export type ToolKind = InkTool | 'shapes' | 'text' | 'sticky' | 'eraser' | 'lasso' | 'laser';
+export type ToolKind = InkTool | 'shapes' | 'text' | 'sticky' | 'eraser' | 'lasso' | 'laser' | 'tape';
 export type PenStyle = 'fountain' | 'ball' | 'brush' | 'pencil';
 /** Line style of a pen or shape stroke. Absent on a stroke means solid. */
 export type DashStyle = 'solid' | 'dashed' | 'dotted';
@@ -125,13 +125,21 @@ export interface LinkItem extends ItemBase {
   label?: string;
 }
 
-export type PageItem = TextItem | ImageItem | StickyItem | LinkItem;
+/** A strip of tape covering whatever is under it, for testing yourself. Tapping it shows what is underneath. */
+export interface TapeItem extends ItemBase {
+  kind: 'tape';
+  color: string;
+}
+
+export type PageItem = TextItem | ImageItem | StickyItem | LinkItem | TapeItem;
 
 /** Page fields a `page.updated` op can change. An undefined value means the field is absent. */
 export type PagePatch = Partial<Pick<Page, 'template' | 'size' | 'paper' | 'background'>>;
 
 /** Fields an `items.updated` op can change. */
-export type ItemPatch = Partial<Omit<TextItem, 'id' | 'kind'> & Omit<ImageItem, 'id' | 'kind'> & Omit<StickyItem, 'id' | 'kind'> & Omit<LinkItem, 'id' | 'kind'>>;
+export type ItemPatch = Partial<
+  Omit<TextItem, 'id' | 'kind'> & Omit<ImageItem, 'id' | 'kind'> & Omit<StickyItem, 'id' | 'kind'> & Omit<LinkItem, 'id' | 'kind'> & Omit<TapeItem, 'id' | 'kind'>
+>;
 
 /** A custom template: an image in the notebook's blob store, fitted to the page under the template lines. */
 export interface ImageBackground {

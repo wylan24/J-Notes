@@ -13,6 +13,7 @@ const paths: Record<string, string> = {
   pages: 'M9 3h10v14H9zM5 7v14h10',
   sidebar: 'M4 4h16v16H4zM9.5 4v16',
   bookmark: 'M7 3.5h10v17l-5-4-5 4z',
+  tape: 'M3 10l14-5.5 3 7.5-14 5.5zM7 8.4l3 7.6M12 6.5l3 7.6',
   eyedropper: 'M15.5 4.5l4 4-2 2-4-4zM13.5 6.5l-8 8-1 4 4-1 8-8M11 9l4 4',
   'line-solid': 'M4 12h16',
   'line-dashed': 'M3.5 12h4M10 12h4M16.5 12h4',

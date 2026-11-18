@@ -20,6 +20,7 @@ import { newId } from '../core/ids';
 import { LASER_FADE_MS, paintLaser, type LaserPoint } from '../render/laser';
 import { linkAt, TAP_MS, TAP_SLOP_PX } from '../core/links';
 import { pixelToHex } from '../core/color';
+import { newTape, tapeAt, tapeRect } from '../core/tape';
 import { pointsLength, strokeHitsCircle, type Vec } from '../core/geometry';
 import { edgeNear, mapEdge, projectToEdge, type Edge } from '../core/ruler';
 import { newInkStroke, pressureOf, timeStamp } from './ink';
@@ -54,6 +55,8 @@ export interface ToolState {
   sharpness: number;
   /** Line style for the pen and Shapes tools. */
   dash: DashStyle;
+  /** Colour of new tape. */
+  tapeColor: string;
   /** How much the current ink tool steadies the line, 0..1. */
   stabilise: number;
   /** Highlighter draws ruler-straight lines from the first point. */
@@ -96,6 +99,9 @@ interface Props {
   onEditLink?: (sel: Selection, link: LinkItem | null) => void;
   /** Read-only: no tool does anything; a tap follows a link (or seeks recorded audio) and nothing else. */
   readOnly?: boolean;
+  /** Tape strips lifted to show what is under them, and a tap on a strip to lift or lay it back. */
+  revealed?: ReadonlySet<string>;
+  onToggleTape?: (id: string) => void;
   /** Eyedropper: the next press reports the colour under it instead of using the tool. */
   onSample?: (hex: string) => void;
   /** Laser points as they are drawn (page units), for a presentation window; head null when the pen lifts. */
@@ -195,9 +201,10 @@ type Active =
       last: Vec;
     }
   | { kind: 'lasso'; pointerId: number; poly: Vec[] }
-  | { kind: 'laser'; pointerId: number; cursor: Vec };
+  | { kind: 'laser'; pointerId: number; cursor: Vec }
+  | { kind: 'tape'; pointerId: number; start: Vec; cur: Vec };
 
-export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, onAddToOutline, onFollowLink, onEditLink, readOnly, onLaser, onSample, playback, onSeekInk, highlights }: Props) {
+export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, onAddToOutline, onFollowLink, onEditLink, readOnly, onLaser, onSample, revealed, onToggleTape, playback, onSeekInk, highlights }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const baseRef = useRef<HTMLCanvasElement>(null);
   const liveRef = useRef<HTMLCanvasElement>(null);
@@ -215,7 +222,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   /** Read-only: a press waiting to see whether it is a tap. */
   const readTap = useRef<{ pointerId: number; pt: Vec; x: number; y: number; t: number; moved: boolean } | null>(null);
   /** A press that began on a link; it follows the link if it ends as a tap. */
-  const linkTap = useRef<{ pointerId: number; link: LinkItem; x: number; y: number; t: number; moved: boolean } | null>(null);
+  const linkTap = useRef<{ pointerId: number; link: LinkItem | null; tapeId: string | null; x: number; y: number; t: number; moved: boolean } | null>(null);
   const clearLiveOnNextBase = useRef(false);
   const liveFrame = useRef(0);
   const [drag, setDragState] = useState<{ pointerId: number; sx: number; sy: number; dx: number; dy: number } | null>(null);
@@ -260,7 +267,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     paintPage(canvas, pageRef.current, scale, dpr, {
       hidden: hidden.current ?? undefined,
       replace: replaced.current ?? undefined,
-      items: { images, hidden: hiddenItems.current ?? undefined, override: itemOverride.current ?? undefined },
+      items: { images, hidden: hiddenItems.current ?? undefined, override: itemOverride.current ?? undefined, revealed },
       pdf: pdfResolver(store.doc.id),
       fade: playbackRef.current ? (s) => playbackState(s, playbackRef.current!.rec, playbackRef.current!.t) === 'ahead' : undefined,
     });
@@ -294,7 +301,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     lastZoom.current = zoom;
     renderBase();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, zoom, visible, dpr, playback?.rec, playback?.t]);
+  }, [page, zoom, visible, dpr, playback?.rec, playback?.t, revealed]);
 
   // --- Live (wet-ink) layer -------------------------------------------------
   const liveCtx = () => {
@@ -355,6 +362,13 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       ctx.lineWidth = 1 / scale;
       ctx.fill();
       ctx.stroke();
+    } else if (a.kind === 'tape') {
+      const r = tapeRect(a.start, a.cur);
+      if (r) {
+        ctx.globalAlpha = 0.75;
+        ctx.fillStyle = tool.tapeColor;
+        ctx.fillRect(r.x, r.y, r.w, r.h);
+      }
     } else if (a.kind === 'lasso' && a.poly.length > 1) {
       ctx.beginPath();
       ctx.moveTo(a.poly[0].x, a.poly[0].y);
@@ -523,13 +537,16 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       commitEdit();
       if (tool.kind === 'text' || tool.kind === 'sticky') return;
     }
-    // A press on a link follows it if it turns out to be a tap, whatever the tool.
+    // A press on a link follows it, and one on tape shows or covers what is under it, if it turns out
+    // to be a tap, whatever the tool.
     const link = onFollowLink ? linkAt(pageRef.current, pt, 4 / scale) : null;
-    linkTap.current = link ? { pointerId: e.pointerId, link, x: e.clientX, y: e.clientY, t: performance.now(), moved: false } : null;
-    if (link && (tool.kind === 'text' || tool.kind === 'sticky')) {
-      // These tools act on press, so a press on a link is taken as following it.
+    const tape = !link && onToggleTape ? tapeAt(pageRef.current, pt) : null;
+    linkTap.current = link || tape ? { pointerId: e.pointerId, link, tapeId: tape?.id ?? null, x: e.clientX, y: e.clientY, t: performance.now(), moved: false } : null;
+    if ((link || tape) && (tool.kind === 'text' || tool.kind === 'sticky')) {
+      // These tools act on press, so a press on a link or tape is taken as a tap on it.
       linkTap.current = null;
-      onFollowLink?.(link.target);
+      if (link) onFollowLink?.(link.target);
+      else if (tape) onToggleTape?.(tape.id);
       return;
     }
     // Playback mode: tapping recorded ink jumps the audio to when it was written.
@@ -582,6 +599,8 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       active.current = { kind: 'laser', pointerId: e.pointerId, cursor: pt };
       laserTrail.current.push({ ...pt, t: performance.now() });
       onLaser?.(page.id, [pt], pt);
+    } else if (tool.kind === 'tape') {
+      active.current = { kind: 'tape', pointerId: e.pointerId, start: pt, cur: pt };
     } else {
       active.current = { kind: 'lasso', pointerId: e.pointerId, poly: [pt] };
     }
@@ -682,6 +701,8 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     } else if (a.kind === 'erase') {
       a.cursor = pts[pts.length - 1];
       eraseAt(pts);
+    } else if (a.kind === 'tape') {
+      a.cur = pts[pts.length - 1];
     } else if (a.kind === 'laser') {
       const t = performance.now();
       a.cursor = pts[pts.length - 1];
@@ -700,7 +721,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     // A quick tap on a link follows it: whatever the tool began (a dot, an erase, a selection) is dropped.
     const tap = linkTap.current;
     linkTap.current = null;
-    const follow = commitArg && tap && tap.pointerId === a.pointerId && !tap.moved && performance.now() - tap.t < TAP_MS ? tap.link : null;
+    const follow = commitArg && tap && tap.pointerId === a.pointerId && !tap.moved && performance.now() - tap.t < TAP_MS ? tap : null;
     const commit = commitArg && !follow;
     if (follow) {
       if (a.kind === 'ink' && a.holdTimer) clearTimeout(a.holdTimer);
@@ -708,7 +729,14 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       replaced.current = null;
       if (a.kind === 'erase') renderBase();
       clearLive();
-      onFollowLink?.(follow.target);
+      if (follow.link) onFollowLink?.(follow.link.target);
+      else if (follow.tapeId) onToggleTape?.(follow.tapeId);
+      return;
+    }
+    if (a.kind === 'tape') {
+      clearLive();
+      const rect = commit ? tapeRect(a.start, a.cur) : null;
+      if (rect) store.dispatch([{ type: 'items.added', pageId: page.id, items: [newTape(rect, tool.tapeColor)] }]);
       return;
     }
     if (a.kind === 'ink') {
@@ -760,6 +788,8 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     if (!tap || tap.pointerId !== pointerId || tap.moved || performance.now() - tap.t > TAP_MS) return;
     const link = linkAt(pageRef.current, tap.pt, 4 / scale);
     if (link) return onFollowLink?.(link.target);
+    const tape = tapeAt(pageRef.current, tap.pt);
+    if (tape) return onToggleTape?.(tape.id);
     if (onSeekInk) {
       const hit = strokeAtForSeek(pageRef.current.strokes, tap.pt, 8 / scale);
       if (hit?.rec) onSeekInk(hit.rec, seekTimeFor(hit));

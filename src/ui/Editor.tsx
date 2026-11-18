@@ -22,6 +22,7 @@ import { addPreset, applyPreset, makePreset, normalizePresets, removePreset, typ
 import { ToolPresets } from './ToolPresets';
 import { ColorPicker } from './ColorPicker';
 import { addSwatch, normalizeSwatches } from '../core/color';
+import { countTape, removeAllTapeOps, TAPE_COLORS, toggleRevealed } from '../core/tape';
 import { OutlinePanel } from './OutlinePanel';
 import { addOutlineEntry } from '../core/outline';
 import { SearchPanel, type SearchHit } from './SearchPanel';
@@ -86,6 +87,7 @@ const TOOLS: { kind: ToolKind; label: string; key: string }[] = [
   { kind: 'text', label: 'Text', key: 'T' },
   { kind: 'sticky', label: 'Sticky note', key: 'N' },
   { kind: 'laser', label: 'Laser pointer', key: 'K' },
+  { kind: 'tape', label: 'Tape', key: 'G' },
 ];
 
 interface InkSettings {
@@ -214,6 +216,11 @@ function EditorInner({
   const [penOnly, setPenOnly] = useState(() => readPref('jnotes.penOnly', false));
   const [textStyle, setTextStyle] = useState<TextStyle>(() => ({ ...DEFAULT_TEXT, ...readPref<Partial<TextStyle>>('jnotes.text', {}) }));
   const [stickyColor, setStickyColor] = useState(() => readPref('jnotes.stickyColor', STICKY_COLORS[0]));
+  const [tapeColor, setTapeColor] = useState(() => readPref('jnotes.tapeColor', TAPE_COLORS[0]));
+  useEffect(() => writePref('jnotes.tapeColor', tapeColor), [tapeColor]);
+  // Tape strips lifted to show what is under them: a viewing state for this visit, not saved.
+  const [revealed, setRevealed] = useState<ReadonlySet<string>>(new Set());
+  const toggleTape = useCallback((id: string) => setRevealed((r) => toggleRevealed(r, id)), []);
   const photoInput = useRef<HTMLInputElement>(null);
   const [toolbarPrefs, setToolbarPrefs] = useState<ToolbarPrefs>(() => normalizePrefs(readPref<unknown>('jnotes.toolbar', null)));
   const [customising, setCustomising] = useState(false);
@@ -435,6 +442,7 @@ function EditorInner({
     highlighterOnly: eraser.highlighterOnly,
     text: textStyle,
     stickyColor,
+    tapeColor,
   };
 
   // --- Ruler and zoom window --------------------------------------------------------------
@@ -1222,7 +1230,7 @@ function EditorInner({
         </div>
       </header>
 
-      {!readOnly && (inkTool || toolKind === 'eraser' || toolKind === 'text' || toolKind === 'sticky') && (
+      {!readOnly && (inkTool || toolKind === 'eraser' || toolKind === 'text' || toolKind === 'sticky' || toolKind === 'tape') && (
         <div className="tool-options" data-no-gesture role="toolbar" aria-label="Tool options">
           {inkTool === 'pen' && (
             <>
@@ -1381,6 +1389,41 @@ function EditorInner({
                 <span className="swatch" style={{ background: c }} />
               </button>
             ))}
+          {toolKind === 'tape' && (
+            <>
+              {TAPE_COLORS.map((c) => (
+                <button key={c} className={`swatch-btn ${tapeColor === c ? 'active' : ''}`} aria-label={`Tape colour ${c}`} aria-pressed={tapeColor === c} onClick={() => setTapeColor(c)}>
+                  <span className="swatch" style={{ background: c }} />
+                </button>
+              ))}
+              <span className="divider" />
+              <span className="tool-hint">Drag over notes to cover them; tap tape to peek</span>
+              <button
+                className="btn sm ghost"
+                disabled={!countTape(doc)}
+                onClick={() =>
+                  setRevealed((r) => {
+                    const all = doc.pages.flatMap((p) => p.items.filter((it) => it.kind === 'tape').map((it) => it.id));
+                    return all.every((id) => r.has(id)) ? new Set() : new Set(all);
+                  })
+                }
+              >
+                {doc.pages.every((p) => p.items.every((it) => it.kind !== 'tape' || revealed.has(it.id))) && countTape(doc) ? 'Cover all' : 'Show all'}
+              </button>
+              <button
+                className="btn sm ghost danger-text"
+                disabled={!countTape(doc)}
+                onClick={() => {
+                  const n = countTape(doc);
+                  if (!confirm(`Remove all ${n} ${n === 1 ? 'strip' : 'strips'} of tape from this notebook? You can undo this.`)) return;
+                  store.dispatch(removeAllTapeOps(store.doc));
+                  setRevealed(new Set());
+                }}
+              >
+                Remove all tape
+              </button>
+            </>
+          )}
           {toolKind === 'eraser' && (
             <>
               {ERASER_SIZES.map((size, i) => (
@@ -1480,6 +1523,8 @@ function EditorInner({
               rulerEdges={ruler ? rulerEdgesClient : undefined}
               onSaveElement={(sel) => void saveAsElement(sel)}
               onAddToOutline={addSelectionToOutline}
+              revealed={revealed}
+              onToggleTape={toggleTape}
               onFollowLink={followLink}
               readOnly={readOnly}
               onLaser={presenter.presenting ? presenter.sendLaser : undefined}

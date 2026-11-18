@@ -11,6 +11,7 @@ export const ITEM_INFO: Record<ToolbarItem, { label: string; icon: string }> = {
   eraser: { label: 'Eraser', icon: 'eraser' },
   lasso: { label: 'Lasso', icon: 'lasso' },
   laser: { label: 'Laser pointer', icon: 'laser' },
+  tape: { label: 'Tape', icon: 'tape' },
   ruler: { label: 'Ruler', icon: 'ruler' },
   zoomWindow: { label: 'Zoom window', icon: 'zoomWindow' },
   photo: { label: 'Insert photo', icon: 'image' },

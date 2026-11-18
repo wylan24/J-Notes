@@ -132,6 +132,7 @@ export function resizeItem<T extends PageItem>(it: T, w: number, h: number, meas
       return { ...next, h: textHeight(next, measure) } as T;
     }
     case 'link':
+    case 'tape':
       return { ...it, w: Math.max(16, w), h: Math.max(16, h) };
     default:
       return { ...it, w: Math.max(60, w), h: Math.max(60, h) };

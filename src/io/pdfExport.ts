@@ -8,7 +8,7 @@ import { pagePaper, pageSize, type NotebookDoc, type Page, type PageItem, type S
 import { hexToRgb, placement, type Placement } from '../core/pdfPlacement';
 import { templateLayout } from '../core/templates';
 import { HIGHLIGHTER_ALPHA, steadied, strokeSvgPath } from '../render/stroke';
-import { LINK_COLOR } from '../render/items';
+import { isOverItem, LINK_COLOR } from '../render/items';
 import { LINK_PAD, LINK_TEXT_SIZE } from '../core/links';
 import { dabsByLevel, pencilAlpha, pencilDabs, type Dab } from '../core/pencil';
 import { PAPER_STYLES } from '../render/page';
@@ -84,9 +84,9 @@ class ExportContext {
       }
     }
 
-    for (const it of page.items) if (it.kind !== 'sticky') await this.item(draw, it);
+    for (const it of page.items) if (!isOverItem(it)) await this.item(draw, it);
     for (const tool of ['highlighter', 'pen'] as const) for (const s of page.strokes) if (s.tool === tool) draw.stroke(s);
-    for (const it of page.items) if (it.kind === 'sticky') await this.item(draw, it);
+    for (const it of page.items) if (isOverItem(it)) await this.item(draw, it);
   }
 
   private async item(draw: PageDrawer, it: PageItem): Promise<void> {
@@ -109,6 +109,11 @@ class ExportContext {
       const font = await this.font('sans', false);
       const fit = encodable(font);
       draw.textLines([fit(it.label)], it.x + LINK_PAD, it.y + it.h / 2 - (LINK_TEXT_SIZE * LINE_HEIGHT) / 2, LINK_TEXT_SIZE, font, LINK_COLOR);
+      return;
+    }
+    // Tape exports covering what is under it, as on the page.
+    if (it.kind === 'tape') {
+      draw.rect(it.x, it.y, it.w, it.h, it.color);
       return;
     }
     // Sticky note.

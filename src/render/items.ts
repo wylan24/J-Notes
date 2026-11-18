@@ -1,4 +1,4 @@
-import type { ImageItem, LinkItem, PageItem, StickyItem, TextItem } from '../core/model';
+import type { ImageItem, LinkItem, PageItem, StickyItem, TapeItem, TextItem } from '../core/model';
 import { LINK_PAD, LINK_TEXT_SIZE } from '../core/links';
 import { fontFamily, LINE_HEIGHT, STICKY_ICON, STICKY_PAD, STICKY_TEXT_SIZE, TEXT_PAD, textLines, wrapLines, type MeasureText } from '../core/items';
 import { getBlob } from '../storage/db';
@@ -102,6 +102,8 @@ export interface ItemPaintOptions {
   hidden?: ReadonlySet<string>;
   /** Items to draw in place of the stored ones (a move or resize in progress). */
   override?: ReadonlyMap<string, PageItem>;
+  /** Tape strips currently lifted to show what is under them. */
+  revealed?: ReadonlySet<string>;
 }
 
 function paintImage(ctx: CanvasRenderingContext2D, it: ImageItem, images?: ImageResolver) {
@@ -175,6 +177,47 @@ function paintSticky(ctx: CanvasRenderingContext2D, it: StickyItem) {
   ctx.restore();
 }
 
+/** Sticky notes and tape sit above ink; everything else below it. */
+export const isOverItem = (it: PageItem) => it.kind === 'sticky' || it.kind === 'tape';
+
+/**
+ * Tape: an opaque strip with a faint diagonal texture and a soft shadow, covering what is beneath.
+ * Lifted, it becomes a pale outline so you can still see where it is.
+ */
+function paintTape(ctx: CanvasRenderingContext2D, it: TapeItem, revealed: boolean) {
+  ctx.save();
+  if (revealed) {
+    ctx.fillStyle = it.color;
+    ctx.globalAlpha = 0.14;
+    ctx.fillRect(it.x, it.y, it.w, it.h);
+    ctx.globalAlpha = 0.8;
+    ctx.strokeStyle = it.color;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 4]);
+    ctx.strokeRect(it.x + 0.75, it.y + 0.75, it.w - 1.5, it.h - 1.5);
+    ctx.restore();
+    return;
+  }
+  ctx.shadowColor = 'rgba(0,0,0,0.16)';
+  ctx.shadowBlur = 4;
+  ctx.shadowOffsetY = 1;
+  ctx.fillStyle = it.color;
+  ctx.fillRect(it.x, it.y, it.w, it.h);
+  ctx.shadowColor = 'transparent';
+  ctx.beginPath();
+  ctx.rect(it.x, it.y, it.w, it.h);
+  ctx.clip();
+  ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let d = -it.h; d < it.w; d += 9) {
+    ctx.moveTo(it.x + d, it.y + it.h);
+    ctx.lineTo(it.x + d + it.h, it.y);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
 export const LINK_COLOR = '#2563eb';
 
 /** A visible link is blue underlined text; a hotspot is a faint blue wash with a dashed underline. */
@@ -210,10 +253,11 @@ export function paintItems(ctx: CanvasRenderingContext2D, items: readonly PageIt
   for (const stored of items) {
     if (opts.hidden?.has(stored.id)) continue;
     const it = opts.override?.get(stored.id) ?? stored;
-    if ((it.kind === 'sticky') !== (layer === 'over')) continue;
+    if (isOverItem(it) !== (layer === 'over')) continue;
     if (it.kind === 'image') paintImage(ctx, it, opts.images);
     else if (it.kind === 'text') paintText(ctx, it);
     else if (it.kind === 'link') paintLink(ctx, it);
+    else if (it.kind === 'tape') paintTape(ctx, it, !!opts.revealed?.has(it.id));
     else paintSticky(ctx, it);
   }
 }
