@@ -23,6 +23,7 @@ import { pixelToHex } from '../core/color';
 import { newTape, tapeAt, tapeRect } from '../core/tape';
 import { isScribble, scribbledStrokes } from '../core/scribble';
 import { inkKind, type InkKind } from '../core/contentKinds';
+import { arrangeSelectionOps, lockSelectionOps, unlockedContent, type Arrange } from '../core/arrange';
 import { lassoAllowsItem, lassoPolygon, selectWithLasso, type LassoKind, type LassoShape } from '../core/lasso';
 import { pointsLength, strokeHitsCircle, type Vec } from '../core/geometry';
 import { edgeNear, mapEdge, projectToEdge, type Edge } from '../core/ruler';
@@ -478,10 +479,10 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   /** Text and Sticky tools: tap an item of that kind to edit it, or empty paper to add one. */
   const tapItemTool = (pt: Vec) => {
     if (tool.kind === 'text') {
-      const hit = itemAt(pageRef.current, pt, ['text']);
+      const hit = itemAt(unlockedContent(pageRef.current), pt, ['text']);
       setEditing(hit ? { item: hit as TextItem, isNew: false } : { item: newText(pt, tool.text, size), isNew: true });
     } else {
-      const hit = itemAt(pageRef.current, pt, ['sticky']) as StickyItem | null;
+      const hit = itemAt(unlockedContent(pageRef.current), pt, ['sticky']) as StickyItem | null;
       if (hit?.collapsed) {
         const op = updateItemOp(pageRef.current, hit.id, { collapsed: false });
         if (op) store.dispatch([op]);
@@ -603,7 +604,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
         pointerId: e.pointerId,
         r: tool.eraserPx / scale,
         mode: tool.eraseMode,
-        canErase: (s) => kinds.includes(inkKind(s)),
+        canErase: (s) => !s.locked && kinds.includes(inkKind(s)),
         hits: new Set(),
         pieces: new Map(),
         cursor: pt,
@@ -759,7 +760,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       if (commit) {
         // Scribbling over ink with the pen rubs it out (one undo step) instead of adding the scribble.
         if (tool.kind === 'pen' && tool.scribbleErase && !a.snap && isScribble(a.stroke.points)) {
-          const ids = scribbledStrokes(a.stroke.points, pageRef.current.strokes);
+          const ids = scribbledStrokes(a.stroke.points, unlockedContent(pageRef.current).strokes);
           const op = ids.length ? removeStrokesOp(pageRef.current, ids) : null;
           if (op) {
             clearLiveOnNextBase.current = true;
@@ -792,7 +793,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       return;
     } else if (a.kind === 'lasso' && commit) {
       // A tap (rather than a loop) selects the item under it.
-      const p = pageRef.current;
+      const p = unlockedContent(pageRef.current);
       if (pointsLength(a.path as InputPoint[]) * scale < 8) {
         const hit = itemAt({ ...p, items: p.items.filter((it) => lassoAllowsItem(tool.lassoKinds, it)) }, a.path[0]);
         setSelection(hit ? { pageId: page.id, strokeIds: [], itemIds: [hit.id] } : null);
@@ -945,6 +946,16 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     const dup = duplicateSelectionOps(page, selected, 24, 24);
     store.dispatch(dup.ops);
     setSelection(dup.selection);
+  };
+  const lockSelection = () => {
+    if (!selected) return;
+    store.dispatch(lockSelectionOps(page, selected));
+    setSelection(null);
+  };
+  const arrangeSelection = (where: Arrange) => {
+    if (!selected) return;
+    const ops = arrangeSelectionOps(page, selected, where);
+    if (ops.length) store.dispatch(ops);
   };
   const recolorSelection = (color: string) => {
     const ops: DocOp[] = [];
@@ -1122,6 +1133,9 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
                 </>
               )}
               <button onClick={duplicateSelection}>Duplicate</button>
+              <button onClick={lockSelection} title="Lock: the eraser and lasso pass over it. Unlock from the Lasso tool's options.">Lock</button>
+              <button onClick={() => arrangeSelection('front')} title="Bring to front">To front</button>
+              <button onClick={() => arrangeSelection('back')} title="Send to back">To back</button>
               {onSaveElement && selected && <button onClick={() => onSaveElement(selected)}>Save as element</button>}
               {onAddToOutline && selected && <button onClick={() => onAddToOutline(selected)}>Add to outline</button>}
               {onEditLink && selected && (

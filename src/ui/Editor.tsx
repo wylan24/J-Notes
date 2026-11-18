@@ -49,6 +49,7 @@ import { recordingSupported, stopRecording, useRecorderState } from './recorder'
 import type { Recording } from '../core/model';
 import { defaultElementName, elementBlobIds, makeElementContent, placeElement, type SavedElement } from '../core/elements';
 import { RulerOverlay } from './Ruler';
+import { countLocked, unlockAllOps } from '../core/arrange';
 import { pastedFromEvent, readPasted, writeClip, writeClipToEvent, type Pasted } from './clipboard';
 import type { Clip, ClipBlob } from '../core/clipboard';
 import { ZoomWindow } from './ZoomWindow';
@@ -1528,6 +1529,18 @@ function EditorInner({
                 ))}
               </div>
               <span className="divider" />
+              {(() => {
+                const pg = doc.pages[currentPage];
+                const n = pg ? countLocked(pg) : 0;
+                return n ? (
+                  <>
+                    <button className="chip" title="Locked content can't be erased or selected until it is unlocked" onClick={() => store.dispatch(unlockAllOps(pg))}>
+                      <Icon name="lock" /> Unlock {n} on this page
+                    </button>
+                    <span className="divider" />
+                  </>
+                ) : null;
+              })()}
               <div className="erase-kinds" role="group" aria-label="Lasso selects">
                 <span className="tool-hint">Selects</span>
                 {LASSO_KINDS.map((k) => {

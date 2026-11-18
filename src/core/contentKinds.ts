@@ -46,14 +46,14 @@ export const CONTENT_LABELS: Record<ContentKind, string> = {
 
 export function countContent(page: Page): Record<ContentKind, number> {
   const out = Object.fromEntries(CONTENT_KINDS.map((k) => [k, 0])) as Record<ContentKind, number>;
-  for (const s of page.strokes) out[inkKind(s)]++;
-  for (const it of page.items) out[it.kind]++;
+  for (const s of page.strokes) if (!s.locked) out[inkKind(s)]++;
+  for (const it of page.items) if (!it.locked) out[it.kind]++;
   return out;
 }
 
-/** Ops deleting one kind of content from a page, or everything with 'all'; together they are one undo step. */
+/** Ops deleting one kind of content from a page, or everything with 'all'; together they are one undo step. Locked content stays. */
 export function deleteContentOps(page: Page, kind: ContentKind | 'all'): DocOp[] {
-  const strokes = page.strokes.filter((s) => kind === 'all' || inkKind(s) === kind).map((s) => s.id);
-  const items = page.items.filter((it) => kind === 'all' || it.kind === kind).map((it) => it.id);
+  const strokes = page.strokes.filter((s) => !s.locked && (kind === 'all' || inkKind(s) === kind)).map((s) => s.id);
+  const items = page.items.filter((it) => !it.locked && (kind === 'all' || it.kind === kind)).map((it) => it.id);
   return [removeStrokesOp(page, strokes), removeItemsOp(page, items)].filter((op): op is DocOp => op !== null);
 }

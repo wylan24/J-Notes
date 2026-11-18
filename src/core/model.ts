@@ -70,6 +70,8 @@ export interface Stroke {
   stabilise?: number;
   /** The recording this stroke was written during; its points' `t` are times into that recording. */
   rec?: string;
+  /** Locked: the eraser and lasso pass over it. Absent when unlocked. */
+  locked?: true;
 }
 
 /** An audio recording made in the notebook. The audio bytes live in the blob store. */
@@ -89,6 +91,8 @@ interface ItemBase {
   y: number;
   w: number;
   h: number;
+  /** Locked: the eraser and lasso pass over it, and tools don't edit it. Absent when unlocked. */
+  locked?: true;
 }
 
 export interface TextItem extends ItemBase {

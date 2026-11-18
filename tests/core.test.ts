@@ -49,6 +49,8 @@ describe('ops', () => {
       removeStrokesOp(page, ['a', 'c'])!,
       { type: 'strokes.translated', pageId: 'p1', ids: ['b'], dx: 5, dy: -3 },
       { type: 'strokes.recolored', pageId: 'p1', ids: ['a', 'b'], colors: ['#f00', '#0f0'], previous: ['#000', '#000'] },
+      { type: 'strokes.locked', pageId: 'p1', ids: ['a', 'c'], locked: true },
+      { type: 'strokes.reordered', pageId: 'p1', order: ['c', 'a', 'b'], previous: ['a', 'b', 'c'] },
     ];
     for (const op of ops) {
       const after = applyOp(doc, op);

@@ -19,7 +19,13 @@ export type DocOp =
   | { type: 'strokes.recolored'; pageId: string; ids: string[]; colors: string[]; previous: string[] }
   /** Affine transform (resize/rotate) of strokes, as [a, b, c, d, e, f]; undone by the inverse matrix. */
   | { type: 'strokes.transformed'; pageId: string; ids: string[]; matrix: Matrix }
+  /** Lock or unlock strokes; built only for strokes not already in that state, so the inverse flips `locked`. */
+  | { type: 'strokes.locked'; pageId: string; ids: string[]; locked: boolean }
+  /** Z-order of the page's strokes, as ids bottom to top; `previous` is the order before. */
+  | { type: 'strokes.reordered'; pageId: string; order: string[]; previous: string[] }
   | { type: 'items.added'; pageId: string; items: PageItem[]; indices?: number[] }
+  /** Z-order of the page's items, as ids bottom to top; `previous` is the order before. */
+  | { type: 'items.reordered'; pageId: string; order: string[]; previous: string[] }
   | { type: 'items.removed'; pageId: string; items: PageItem[]; indices: number[] }
   /** `previous` holds the old value of every patched field (undefined where the field was absent). */
   | { type: 'items.updated'; pageId: string; id: string; patch: ItemPatch; previous: ItemPatch }
@@ -54,6 +60,14 @@ function insertAt<T>(list: T[], values: T[], indices?: number[]): T[] {
   const pairs = values.map((v, i) => [indices[i], v] as const).sort((a, b) => a[0] - b[0]);
   for (const [idx, v] of pairs) out.splice(Math.min(idx, out.length), 0, v);
   return out;
+}
+
+/** The list in `order` (by id); anything `order` doesn't name keeps its place after those, so a replay can't lose content. */
+function reorder<T extends { id: string }>(list: T[], order: string[]): T[] {
+  const byId = new Map(list.map((x) => [x.id, x]));
+  const named = order.flatMap((id) => byId.get(id) ?? []);
+  const seen = new Set(order);
+  return [...named, ...list.filter((x) => !seen.has(x.id))];
 }
 
 /** Apply a patch; an undefined value removes the field, so undoing restores an absent field exactly. */
@@ -116,6 +130,21 @@ export function applyOp(doc: NotebookDoc, op: DocOp): NotebookDoc {
       const ids = new Set(op.ids);
       return updatePage(doc, op.pageId, (page) => ({ ...page, strokes: page.strokes.map((s) => (ids.has(s.id) ? transformStroke(s, op.matrix) : s)) }));
     }
+    case 'strokes.locked': {
+      const ids = new Set(op.ids);
+      return updatePage(doc, op.pageId, (page) => ({
+        ...page,
+        strokes: page.strokes.map((s) => {
+          if (!ids.has(s.id)) return s;
+          const { locked: _l, ...rest } = s;
+          return op.locked ? { ...rest, locked: true as const } : rest;
+        }),
+      }));
+    }
+    case 'strokes.reordered':
+      return updatePage(doc, op.pageId, (page) => ({ ...page, strokes: reorder(page.strokes, op.order) }));
+    case 'items.reordered':
+      return updatePage(doc, op.pageId, (page) => ({ ...page, items: reorder(page.items, op.order) }));
     case 'items.added':
       return updatePage(doc, op.pageId, (page) => ({ ...page, items: insertAt(page.items, op.items, op.indices) }));
     case 'items.removed': {
@@ -156,6 +185,11 @@ export function inverseOp(op: DocOp): DocOp {
       return { ...op, colors: op.previous, previous: op.colors };
     case 'strokes.transformed':
       return { ...op, matrix: invert(op.matrix) };
+    case 'strokes.locked':
+      return { ...op, locked: !op.locked };
+    case 'strokes.reordered':
+    case 'items.reordered':
+      return { ...op, order: op.previous, previous: op.order };
     case 'items.added':
       return { type: 'items.removed', pageId: op.pageId, items: op.items, indices: op.indices ?? [] };
     case 'items.removed':
