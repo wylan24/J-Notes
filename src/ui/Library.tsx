@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { blankPage, sizeFor, type Folder, type NotebookMeta, type Orientation, type PageSetup, type PageSizePreset, type Paper, type Template } from '../core/model';
+import { blankPage, docKind, sizeFor, type Folder, type NotebookMeta, type Orientation, type PageSetup, type PageSizePreset, type Paper, type Template } from '../core/model';
 import { PAPER_STYLES } from '../render/page';
 import { TemplateGrid, type CustomTemplate } from './TemplateGrid';
 import { newId } from '../core/ids';
 import { createNotebook, deleteFolder, deleteNotebook, listFolders, listNotebooks, moveNotebook, putFolder, updateMeta } from '../storage/db';
 import { childFolders, countInFolder, effectiveFolder } from '../core/folders';
-import { NATURAL_DIR, normalizeLibraryPrefs, sortFolders, sortNotebooks, type LibraryPrefs, type SortKey } from '../core/librarySort';
+import { KIND_FILTERS, type KindFilter, NATURAL_DIR, normalizeLibraryPrefs, sortFolders, sortNotebooks, type LibraryPrefs, type SortKey } from '../core/librarySort';
 import { Breadcrumbs, FolderCard, FolderDialog, FolderPicker } from './Folders';
 import { COVERS, CoverPicker, EditNotebookDialog } from './CoverPicker';
 import { LockSection } from './Lock';
@@ -15,6 +15,9 @@ import { quicknoteTitle } from '../core/quicknote';
 import { editorClosed, sweepQuicknotes } from '../storage/quicknotes';
 import { pagesFromFiles, titleFromFileName } from '../io/importPages';
 import { Icon } from './icons';
+import { whiteboardPage } from '../core/whiteboard';
+
+const KIND_LABELS: Record<KindFilter, string> = { all: 'Everything', notebook: 'Notebooks', whiteboard: 'Whiteboards', text: 'Documents' };
 
 const isNotebookFile = (f: File) => /\.json$/i.test(f.name) || f.type === 'application/json';
 const SIZES: { id: PageSizePreset; label: string }[] = [
@@ -106,6 +109,17 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
       .then((removed) => removed && refresh());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /** A new whiteboard, straight into the editor. */
+  const newWhiteboard = async () => {
+    const id = newId();
+    const now = Date.now();
+    await createNotebook(
+      { id, kind: 'whiteboard', title: 'Untitled whiteboard', cover: COVERS[0], template: 'dotted', createdAt: now, updatedAt: now, favourite: false, trashedAt: null, pageCount: 1, ...fileHere },
+      { id, pages: [whiteboardPage(newId())] },
+    );
+    onOpen(id);
+  };
 
   /** A blank notebook straight into the editor; thrown away if left empty. */
   const quicknote = async () => {
@@ -219,6 +233,7 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
   const matching = (items ?? []).filter((n) => {
     if (tab === 'trash' ? n.trashedAt === null : n.trashedAt !== null) return false;
     if (tab === 'favourites' && !n.favourite) return false;
+    if (prefs.kind !== 'all' && docKind(n) !== prefs.kind) return false;
     if (browsing) return effectiveFolder(n, folderIds) === here;
     return !q || n.title.toLowerCase().includes(q);
   });
@@ -264,6 +279,9 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
           <button className="btn ghost" onClick={() => void quicknote()} title="A blank notebook, discarded if you leave it empty">
             <Icon name="pencil" /> Quick note
           </button>
+          <button className="btn ghost" onClick={() => void newWhiteboard()} title="One endless page for diagrams and brainstorming">
+            <Icon name="plus" /> Whiteboard
+          </button>
           <button className="btn primary" onClick={() => setCreating(true)}>
             <Icon name="plus" /> New notebook
           </button>
@@ -279,6 +297,16 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
           ))}
         </nav>
         <div className="view-controls">
+          <label className="sort-select">
+            <span>Show</span>
+            <select value={prefs.kind} onChange={(e) => setPrefs({ kind: e.target.value as KindFilter })} aria-label="Show">
+              {KIND_FILTERS.map((k) => (
+                <option key={k} value={k}>
+                  {KIND_LABELS[k]}
+                </option>
+              ))}
+            </select>
+          </label>
           <label className="sort-select">
             <span>Sort</span>
             <select value={prefs.sort} onChange={(e) => setPrefs({ sort: e.target.value as SortKey, dir: NATURAL_DIR[e.target.value as SortKey] })} aria-label="Sort by">
@@ -364,7 +392,7 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
                   {n.title}
                 </div>
                 <div className="card-sub">
-                  {n.pageCount} {n.pageCount === 1 ? 'page' : 'pages'} · {dateLabel(n)}
+                  {docKind(n) === 'whiteboard' ? 'Whiteboard' : docKind(n) === 'text' ? 'Document' : `${n.pageCount} ${n.pageCount === 1 ? 'page' : 'pages'}`} · {dateLabel(n)}
                 </div>
               </div>
               <div className="card-actions">

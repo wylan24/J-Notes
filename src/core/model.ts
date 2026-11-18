@@ -384,9 +384,19 @@ export interface OutlineEntry {
 /** Notebook-level fields a `doc.updated` op can change. An undefined value means the field is absent. */
 export type DocPatch = Partial<Pick<NotebookDoc, 'bookmarks' | 'outline'>>;
 
+/**
+ * What a document is: a notebook of pages, a whiteboard (one very large page), or a typed text
+ * document. Absent on documents from before there was a choice (= notebook).
+ */
+export type DocKind = 'notebook' | 'whiteboard' | 'text';
+
+export const docKind = (meta: Pick<NotebookMeta, 'kind'>): DocKind => (meta.kind === 'whiteboard' || meta.kind === 'text' ? meta.kind : 'notebook');
+
 /** Library-level projection of a notebook (what the library grid shows). */
 export interface NotebookMeta {
   id: string;
+  /** Absent for a notebook. */
+  kind?: DocKind;
   title: string;
   cover: string;
   template: Template;

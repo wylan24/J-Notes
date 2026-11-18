@@ -37,8 +37,10 @@ describe('library sort', () => {
 
   it('reads saved preferences, filling in anything missing or unknown', () => {
     expect(normalizeLibraryPrefs(null)).toEqual(DEFAULT_LIBRARY_PREFS);
-    expect(normalizeLibraryPrefs({ sort: 'name', view: 'list' })).toEqual({ sort: 'name', dir: 'asc', view: 'list' });
+    expect(normalizeLibraryPrefs({ sort: 'name', view: 'list' })).toEqual({ sort: 'name', dir: 'asc', view: 'list', kind: 'all' });
     expect(normalizeLibraryPrefs({ sort: 'size', dir: 'up', view: 'table' })).toEqual(DEFAULT_LIBRARY_PREFS);
-    expect(normalizeLibraryPrefs({ sort: 'created', dir: 'asc' })).toEqual({ sort: 'created', dir: 'asc', view: 'grid' });
+    expect(normalizeLibraryPrefs({ sort: 'created', dir: 'asc' })).toEqual({ sort: 'created', dir: 'asc', view: 'grid', kind: 'all' });
+    expect(normalizeLibraryPrefs({ kind: 'whiteboard' }).kind).toBe('whiteboard');
+    expect(normalizeLibraryPrefs({ kind: 'spreadsheet' }).kind).toBe('all');
   });
 });

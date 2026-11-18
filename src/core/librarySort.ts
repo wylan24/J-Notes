@@ -1,19 +1,24 @@
 // How the library orders notebooks and folders, and how it lays them out. Remembered per viewer.
 import { folderAndDescendants } from './folders';
-import type { Folder, NotebookMeta } from './model';
+import type { DocKind, Folder, NotebookMeta } from './model';
 
 export type SortKey = 'modified' | 'created' | 'name';
 export type SortDir = 'asc' | 'desc';
 export type LibraryView = 'grid' | 'list';
 
+/** Which kinds of document the library shows. */
+export type KindFilter = 'all' | DocKind;
+export const KIND_FILTERS: readonly KindFilter[] = ['all', 'notebook', 'whiteboard', 'text'];
+
 export interface LibraryPrefs {
   sort: SortKey;
   dir: SortDir;
   view: LibraryView;
+  kind: KindFilter;
 }
 
 /** Newest first, as the library has always shown. */
-export const DEFAULT_LIBRARY_PREFS: LibraryPrefs = { sort: 'modified', dir: 'desc', view: 'grid' };
+export const DEFAULT_LIBRARY_PREFS: LibraryPrefs = { sort: 'modified', dir: 'desc', view: 'grid', kind: 'all' };
 
 /** The direction a sort starts in when chosen: newest first for dates, A to Z for names. */
 export const NATURAL_DIR: Record<SortKey, SortDir> = { modified: 'desc', created: 'desc', name: 'asc' };
@@ -24,7 +29,8 @@ export function normalizeLibraryPrefs(raw: unknown): LibraryPrefs {
   const sort = r.sort === 'created' || r.sort === 'name' || r.sort === 'modified' ? r.sort : DEFAULT_LIBRARY_PREFS.sort;
   const dir = r.dir === 'asc' || r.dir === 'desc' ? r.dir : NATURAL_DIR[sort];
   const view = r.view === 'list' || r.view === 'grid' ? r.view : DEFAULT_LIBRARY_PREFS.view;
-  return { sort, dir, view };
+  const kind = KIND_FILTERS.includes(r.kind as KindFilter) ? (r.kind as KindFilter) : 'all';
+  return { sort, dir, view, kind };
 }
 
 const byName = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });

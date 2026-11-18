@@ -1,5 +1,8 @@
 import { pagePaper, pageSize, type Page, type PageBackground, type PageSize, type Paper, type PdfBackground, type Stroke, type Template } from '../core/model';
-import { templateLayout, type LineTone } from '../core/templates';
+import { templateLayout, templateLayoutIn, type LineTone } from '../core/templates';
+import { strokeBounds, type Bounds } from '../core/geometry';
+import { itemBounds } from '../core/items';
+import { contentBounds } from '../core/whiteboard';
 import { paintStroke } from './stroke';
 import { ensureImage, imageResolver, paintItems, type ImageResolver, type ItemPaintOptions } from './items';
 import { ensurePdfRaster, pdfResolver } from './pdf';
@@ -13,9 +16,9 @@ export const PAPER_STYLES: Record<Paper, Record<LineTone | 'fill' | 'dot' | 'lab
 
 const TONES: LineTone[] = ['grid', 'rule', 'strong', 'margin'];
 
-function paintTemplate(ctx: CanvasRenderingContext2D, template: Template, size: PageSize, paper: Paper): void {
+function paintTemplate(ctx: CanvasRenderingContext2D, template: Template, size: PageSize, paper: Paper, region?: Bounds): void {
   const c = PAPER_STYLES[paper];
-  const { lines, dots, labels } = templateLayout(template, size);
+  const { lines, dots, labels } = region ? templateLayoutIn(template, size, region) : templateLayout(template, size);
   ctx.save();
   ctx.lineWidth = 1;
   // One path per tone, lightest first; the half-unit offset keeps 1-unit lines crisp at 1×.
@@ -103,7 +106,11 @@ export interface PaintOptions {
   items?: ItemPaintOptions;
   /** Strokes to draw faded (ink an audio playback hasn't reached yet). */
   fade?: (s: Stroke) => boolean;
+  /** Only this part of the page (page units) will be seen: content wholly outside it is skipped. */
+  region?: Bounds;
 }
+
+const meets = (a: Bounds, b: Bounds) => a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY;
 
 /**
  * Paint a full page into a canvas at `scale` page-units→CSS px and the given
@@ -126,11 +133,15 @@ export function paintPage(canvas: HTMLCanvasElement | OffscreenCanvas, page: Pag
 }
 
 function paintContent(ctx: CanvasRenderingContext2D, page: Page, opts: PaintOptions): void {
+  const r = opts.region;
+  // A tile of a large page draws only what reaches into it (an item being dragged counts where it is now).
+  const strokes = r ? page.strokes.filter((s) => meets(strokeBounds(s), r)) : page.strokes;
+  const items = r ? page.items.filter((it) => meets(itemBounds(opts.items?.override?.get(it.id) ?? it), r)) : page.items;
   if (page.background) paintBackground(ctx, page.background, pageSize(page), opts);
-  paintTemplate(ctx, page.template, pageSize(page), pagePaper(page));
-  paintItems(ctx, page.items, 'under', opts.items);
-  paintStrokes(ctx, page.strokes, opts.hidden, opts.replace, opts.fade);
-  paintItems(ctx, page.items, 'over', opts.items);
+  paintTemplate(ctx, page.template, pageSize(page), pagePaper(page), r);
+  paintItems(ctx, items, 'under', opts.items);
+  paintStrokes(ctx, strokes, opts.hidden, opts.replace, opts.fade);
+  paintItems(ctx, items, 'over', opts.items);
 }
 
 /**
@@ -178,6 +189,21 @@ export function renderContentThumbnail(
   const canvas = document.createElement('canvas');
   const page: Page = { id: 'element', template: 'blank', strokes: content.strokes, items: content.items };
   paintRegion(canvas, page, rect, w, h, 2, { items: { images } });
+  return canvas.toDataURL('image/png');
+}
+
+/** A whiteboard's library thumbnail, the shape of a notebook cover: its content framed on its paper (the middle of the board when empty). */
+export function renderBoardThumbnail(page: Page, docId: string, w = 240, h = Math.round((240 * 1123) / 794)): string {
+  const size = pageSize(page);
+  const b = contentBounds(page) ?? { minX: size.w / 2 - 200, minY: size.h / 2 - 150, maxX: size.w / 2 + 200, maxY: size.h / 2 + 150 };
+  const pad = Math.max(b.maxX - b.minX, b.maxY - b.minY) * 0.06 + 16;
+  let rw = b.maxX - b.minX + 2 * pad, rh = b.maxY - b.minY + 2 * pad;
+  if (rw / rh < w / h) rw = (rh * w) / h;
+  else rh = (rw * h) / w;
+  const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
+  const rect = { x: cx - rw / 2, y: cy - rh / 2, w: rw, h: rh };
+  const canvas = document.createElement('canvas');
+  paintRegion(canvas, page, rect, w, h, 1, { items: { images: imageResolver(docId) }, region: { minX: rect.x, minY: rect.y, maxX: rect.x + rw, maxY: rect.y + rh } });
   return canvas.toDataURL('image/png');
 }
 

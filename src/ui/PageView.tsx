@@ -61,7 +61,8 @@ import { rotateAbout, scaleAbout, snapAngle, transformBounds, transformItem, tra
 import type { Bounds } from '../core/geometry';
 import { replaceStrokesOps, splitStroke } from '../core/erase';
 import type { DocumentStore } from '../core/store';
-import { paintPage, paintStrokes, PAPER_STYLES } from '../render/page';
+import { paintPage, paintRegion, paintStrokes, PAPER_STYLES } from '../render/page';
+import { isLargePage } from '../core/whiteboard';
 import { imageResolver, measurer, onImagesLoaded } from '../render/items';
 import { pdfResolver } from '../render/pdf';
 import { paintInk } from '../render/stroke';
@@ -179,6 +180,8 @@ function withRich<T extends EditableItem>(it: T, rich: RichBlock[] | undefined):
 }
 
 const HOLD_MS = 550;
+/** Side of a tile of a large page, in CSS px. */
+const TILE = 512;
 /** How near (screen px) an end must be to an item's edge to attach to it. */
 const ATTACH_SLOP_PX = 14;
 /** Strokes starting this close to a ruler edge (screen px) are drawn along it. */
@@ -312,6 +315,19 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   const size = pageSize(page);
   const selected = selection?.pageId === page.id ? selection : null;
   const images = imageResolver(store.doc.id);
+  // A whiteboard's page is far too big for one canvas: it is painted in tiles, and the live layer
+  // covers only the part on screen. `view` is the part of the page (page units) the live layer covers.
+  const tiled = isLargePage(size);
+  const viewRef = useRef({ x: 0, y: 0, w: size.w, h: size.h });
+  if (!tiled) viewRef.current = { x: 0, y: 0, w: size.w, h: size.h };
+
+  /** A client (screen) point in page units, through the live layer. Also returns page units per CSS px. */
+  const clientToPage = (cx: number, cy: number): Vec & { k: number } => {
+    const r = liveRef.current!.getBoundingClientRect();
+    const v = viewRef.current;
+    const k = v.w / (r.width || 1);
+    return { x: v.x + (cx - r.left) * k, y: v.y + (cy - r.top) * k, k };
+  };
 
   // --- Virtualisation: only pages near the viewport own a full-res canvas. ---
   useEffect(() => {
@@ -321,16 +337,121 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     return () => io.disconnect();
   }, []);
 
+  const paintOptions = () => ({
+    hidden: hidden.current ?? undefined,
+    replace: replaced.current ?? undefined,
+    items: { images: animatedResolver(store.doc.id, images, performance.now()), hidden: hiddenItems.current ?? undefined, override: itemOverride.current ?? undefined, revealed },
+    pdf: pdfResolver(store.doc.id),
+    fade: playbackRef.current ? (s: Stroke) => playbackState(s, playbackRef.current!.rec, playbackRef.current!.t) === 'ahead' : undefined,
+  });
+
+  // --- Tiles (large pages) ---------------------------------------------------------------
+  const tilesRef = useRef<HTMLDivElement>(null);
+  /** Tile canvases by "col,row", each with the content version it was painted at. */
+  const tiles = useRef(new Map<string, { canvas: HTMLCanvasElement; painted: number }>());
+  const tileVersion = useRef(0);
+  const tileZoom = useRef(zoom);
+
+  /** The part of the page on screen, in CSS px from its top-left corner (null when none of it is). */
+  const onScreen = (): { x0: number; y0: number; x1: number; y1: number } | null => {
+    const wrap = wrapRef.current;
+    if (!wrap) return null;
+    const r = wrap.getBoundingClientRect();
+    const port = wrap.closest('.scroller')?.getBoundingClientRect() ?? { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+    const x0 = Math.max(0, port.left - r.left), y0 = Math.max(0, port.top - r.top);
+    const x1 = Math.min(r.width, port.right - r.left), y1 = Math.min(r.height, port.bottom - r.top);
+    return x1 > x0 && y1 > y0 ? { x0, y0, x1, y1 } : null;
+  };
+
+  /** Paint the tiles on screen that are missing or out of date, drop far-off ones, and move the live layer over what is visible. */
+  const syncTiles = () => {
+    const host = tilesRef.current;
+    const live = liveRef.current;
+    if (!host || !live) return;
+    if (tileZoom.current !== scale) {
+      // Tiles are a fixed CSS size, so a new zoom means a new grid.
+      tileZoom.current = scale;
+      for (const t of tiles.current.values()) t.canvas.remove();
+      tiles.current.clear();
+    }
+    const vis = visibleRef.current ? onScreen() : null;
+    const want = new Set<string>();
+    if (vis) {
+      const cssW = size.w * scale, cssH = size.h * scale;
+      const c0 = Math.max(0, Math.floor(vis.x0 / TILE) - 1), c1 = Math.min(Math.ceil(cssW / TILE) - 1, Math.floor(vis.x1 / TILE) + 1);
+      const r0 = Math.max(0, Math.floor(vis.y0 / TILE) - 1), r1 = Math.min(Math.ceil(cssH / TILE) - 1, Math.floor(vis.y1 / TILE) + 1);
+      const opts = paintOptions();
+      for (let row = r0; row <= r1; row++) {
+        for (let col = c0; col <= c1; col++) {
+          const key = `${col},${row}`;
+          want.add(key);
+          let t = tiles.current.get(key);
+          if (!t) {
+            const canvas = document.createElement('canvas');
+            canvas.className = 'page-tile';
+            const w = Math.min(TILE, cssW - col * TILE), h = Math.min(TILE, cssH - row * TILE);
+            Object.assign(canvas.style, { left: `${col * TILE}px`, top: `${row * TILE}px`, width: `${w}px`, height: `${h}px` });
+            host.appendChild(canvas);
+            t = { canvas, painted: -1 };
+            tiles.current.set(key, t);
+          }
+          if (t.painted !== tileVersion.current) {
+            const w = parseFloat(t.canvas.style.width), h = parseFloat(t.canvas.style.height);
+            const rect = { x: (col * TILE) / scale, y: (row * TILE) / scale, w: w / scale, h: h / scale };
+            paintRegion(t.canvas, pageRef.current, rect, w, h, dpr, { ...opts, region: { minX: rect.x, minY: rect.y, maxX: rect.x + rect.w, maxY: rect.y + rect.h } });
+            t.painted = tileVersion.current;
+          }
+        }
+      }
+      // The live layer covers what is on screen, unless a stroke is in progress on it.
+      if (!active.current && !dragRef.current) {
+        const v = { x: vis.x0 / scale, y: vis.y0 / scale, w: (vis.x1 - vis.x0) / scale, h: (vis.y1 - vis.y0) / scale };
+        viewRef.current = v;
+        Object.assign(live.style, { left: `${vis.x0}px`, top: `${vis.y0}px`, width: `${vis.x1 - vis.x0}px`, height: `${vis.y1 - vis.y0}px` });
+      }
+    }
+    for (const [key, t] of tiles.current) {
+      if (want.has(key)) continue;
+      t.canvas.remove();
+      tiles.current.delete(key);
+    }
+  };
+
+  /** The tile canvas under a client point. */
+  const tileAt = (cx: number, cy: number): HTMLCanvasElement | null => {
+    for (const t of tiles.current.values()) {
+      const r = t.canvas.getBoundingClientRect();
+      if (cx >= r.left && cx < r.right && cy >= r.top && cy < r.bottom) return t.canvas;
+    }
+    return null;
+  };
+
+  // Scrolling a tiled page paints the tiles that come into view (once per frame).
+  useEffect(() => {
+    if (!tiled || !visible) return;
+    let frame = 0;
+    const onScroll = () => {
+      if (!frame) frame = requestAnimationFrame(() => ((frame = 0), syncTiles()));
+    };
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onScroll);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onScroll);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tiled, visible, zoom, dpr]);
+
   const renderBase = () => {
+    if (tiled) {
+      tileVersion.current++;
+      syncTiles();
+      return;
+    }
     const canvas = baseRef.current;
     if (!canvas) return;
-    paintPage(canvas, pageRef.current, scale, dpr, {
-      hidden: hidden.current ?? undefined,
-      replace: replaced.current ?? undefined,
-      items: { images: animatedResolver(store.doc.id, images, performance.now()), hidden: hiddenItems.current ?? undefined, override: itemOverride.current ?? undefined, revealed },
-      pdf: pdfResolver(store.doc.id),
-      fade: playbackRef.current ? (s) => playbackState(s, playbackRef.current!.rec, playbackRef.current!.t) === 'ahead' : undefined,
-    });
+    paintPage(canvas, pageRef.current, scale, dpr, paintOptions());
     if (clearLiveOnNextBase.current) {
       clearLiveOnNextBase.current = false;
       clearLive();
@@ -371,6 +492,11 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => onImagesLoaded(() => visibleRef.current && renderBase()), [zoom, dpr]);
   useLayoutEffect(() => {
+    if (tiled) {
+      // Off screen, `syncTiles` drops every tile; on screen it paints what is missing.
+      renderBase();
+      return;
+    }
     if (!visible) {
       const c = baseRef.current;
       if (c && c.width) {
@@ -392,8 +518,9 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   // --- Live (wet-ink) layer -------------------------------------------------
   const liveCtx = () => {
     const c = liveRef.current!;
-    const w = Math.round(size.w * scale * dpr);
-    const h = Math.round(size.h * scale * dpr);
+    const v = viewRef.current;
+    const w = Math.round(v.w * scale * dpr);
+    const h = Math.round(v.h * scale * dpr);
     if (c.width !== w || c.height !== h) {
       c.width = w;
       c.height = h;
@@ -401,7 +528,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     const ctx = c.getContext('2d')!;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    ctx.setTransform(w / size.w, 0, 0, h / size.h, 0, 0);
+    ctx.setTransform(w / v.w, 0, 0, h / v.h, (-v.x * w) / v.w, (-v.y * h) / v.h);
     return ctx;
   };
 
@@ -559,11 +686,10 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
 
   // --- Input -----------------------------------------------------------------
   const toPage = (e: { clientX: number; clientY: number; pressure: number }, pointerType: string): InputPoint => {
-    const r = liveRef.current!.getBoundingClientRect();
-    const k = size.w / r.width;
+    const { x, y } = clientToPage(e.clientX, e.clientY);
     return {
-      x: (e.clientX - r.left) * k,
-      y: (e.clientY - r.top) * k,
+      x,
+      y,
       // Mouse reports 0.5 while pressed; finger often 0 or 1 — both are synthesised later.
       p: pressureOf(e, pointerType),
       ...timeStamp(),
@@ -574,9 +700,11 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   const rulerEdgeAt = (pt: Vec): Edge | null => {
     const edges = rulerEdges?.();
     if (!edges || !liveRef.current) return null;
-    const r = liveRef.current.getBoundingClientRect();
-    const k = size.w / r.width;
-    const toPagePt = (v: Vec) => ({ x: (v.x - r.left) * k, y: (v.y - r.top) * k });
+    const { k } = clientToPage(0, 0);
+    const toPagePt = (v: Vec) => {
+      const p = clientToPage(v.x, v.y);
+      return { x: p.x, y: p.y };
+    };
     return edgeNear(pt, edges.map((e) => mapEdge(e, toPagePt, k)), RULER_REACH_PX * k);
   };
 
@@ -588,10 +716,11 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     if (onSample) {
       // Read the drawn page (paper, PDF, photos, ink) at this point.
       e.preventDefault();
-      const base = baseRef.current;
-      const r = e.currentTarget.getBoundingClientRect();
+      // On a tiled page, read the tile under the press.
+      const base = tiled ? tileAt(e.clientX, e.clientY) : baseRef.current;
+      const r = base?.getBoundingClientRect();
       const ctx = base?.getContext('2d', { willReadFrequently: true });
-      if (!base || !ctx || !base.width) return;
+      if (!base || !r || !ctx || !base.width) return;
       const x = Math.floor(((e.clientX - r.left) / r.width) * base.width);
       const y = Math.floor(((e.clientY - r.top) / r.height) * base.height);
       try {
@@ -957,9 +1086,8 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
 
   // --- Resize and rotate handles (lasso selections) ----------------------------------
   const pagePoint = (e: { clientX: number; clientY: number }): Vec => {
-    const r = liveRef.current!.getBoundingClientRect();
-    const k = size.w / r.width;
-    return { x: (e.clientX - r.left) * k, y: (e.clientY - r.top) * k };
+    const { x, y } = clientToPage(e.clientX, e.clientY);
+    return { x, y };
   };
 
   const onXformDown = (kind: 'scale' | 'rotate', corner?: 'nw' | 'ne' | 'sw' | 'se') => (e: React.PointerEvent<HTMLDivElement>) => {
@@ -1290,10 +1418,10 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
 
   return (
     <div ref={wrapRef} className="page" data-page-id={page.id} style={{ width: cssW, height: cssH, background: PAPER_STYLES[pagePaper(page)].fill }}>
-      <canvas ref={baseRef} className="page-layer" />
+      {tiled ? <div ref={tilesRef} className="page-tiles" /> : <canvas ref={baseRef} className="page-layer" />}
       <canvas
         ref={liveRef}
-        className={`page-layer live ${onSample ? 'sampling' : readOnly ? 'read-only' : `tool-${tool.kind}`}`}
+        className={`page-layer live ${tiled ? 'windowed' : ''} ${onSample ? 'sampling' : readOnly ? 'read-only' : `tool-${tool.kind}`}`}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={(e) => (readOnly ? readOnlyTap(e.pointerId) : finish(true))}

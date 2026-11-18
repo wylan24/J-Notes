@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { FILL_COLORS, NoFillSwatch } from './ShapeStyle';
-import { pageIndexAt, pageOffsets, pageSize, type DashStyle, type EraseMode, type ScrollDirection, type InkTool, type LinkItem, type LinkTarget, type NotebookMeta, type OutlineEntry, type PenStyle, type Template, type ToolKind } from '../core/model';
+import { docKind, pageIndexAt, pageOffsets, pageSize, type DashStyle, type EraseMode, type ScrollDirection, type InkTool, type LinkItem, type LinkTarget, type NotebookMeta, type OutlineEntry, type PenStyle, type Template, type ToolKind } from '../core/model';
 import { newId } from '../core/ids';
 import { DocumentStore } from '../core/store';
 import { deleteSelectionOps, selectionBounds } from '../core/selection';
@@ -33,7 +33,8 @@ import { SearchPanel, type SearchHit } from './SearchPanel';
 import { PdfExportDialog } from './PdfExportDialog';
 import type { CustomTemplate } from './TemplateGrid';
 import { Persister, type SaveStatus } from '../storage/persister';
-import { downloadBlob, exportPagePng, renderContentThumbnail, renderRegionPng, renderThumbnail } from '../render/page';
+import { downloadBlob, exportPagePng, renderBoardThumbnail, renderContentThumbnail, renderRegionPng, renderThumbnail } from '../render/page';
+import { contentBounds, cropToContent, fitView } from '../core/whiteboard';
 import { screenshotImage, type Rect } from '../core/screenshot';
 import { imageResolver, measurer, primeImage } from '../render/items';
 import { isImageFile, prepareImage } from '../io/images';
@@ -63,6 +64,8 @@ const PAGE_GAP = 28;
 const TOOLBAR_ITEM_W = 38;
 const TOOLBAR_FIXED_W = 3 * TOOLBAR_ITEM_W + 2 * 13;
 const MIN_ZOOM = 0.4;
+/** Whiteboards zoom out further, to see a whole diagram. */
+const BOARD_MIN_ZOOM = 0.1;
 const MAX_ZOOM = 4;
 
 const PEN_COLORS = ['#1c1c1e', '#2557c7', '#d1342f', '#1d8a4a', '#8a4fd8'];
@@ -193,6 +196,9 @@ function EditorInner({
   const doc = useSyncExternalStore(store.subscribe, store.getDoc);
   useSyncExternalStore(store.subscribe, store.getVersion); // re-render for undo/redo state
   const [meta, setMeta] = useState(initialMeta);
+  // A whiteboard is one large page: no page tools, a wider zoom range, and Fit to frame its content.
+  const board = docKind(initialMeta) === 'whiteboard';
+  const minZoom = board ? BOARD_MIN_ZOOM : MIN_ZOOM;
   const [zoom, setZoom] = useState(() => readPref('jnotes.zoom', 1));
   // Read-only: remembered per notebook in this browser.
   const [readOnly, setReadOnlyState] = useState(() => readPref<string[]>('jnotes.readOnly', []).includes(initialMeta.id));
@@ -309,7 +315,8 @@ function EditorInner({
   useEffect(() => writePref('jnotes.text', textStyle), [textStyle]);
   useEffect(() => writePref('jnotes.toolbar', toolbarPrefs), [toolbarPrefs]);
   useEffect(() => writePref('jnotes.stickyColor', stickyColor), [stickyColor]);
-  useEffect(() => writePref('jnotes.zoom', zoom), [zoom]);
+  // A board's zoom (often far out) isn't carried over to notebooks.
+  useEffect(() => void (!board && writePref('jnotes.zoom', zoom)), [zoom, board]);
   useEffect(() => writePref('jnotes.scroll', scrollDir), [scrollDir]);
 
   // --- Persistence ------------------------------------------------------------
@@ -318,6 +325,7 @@ function EditorInner({
   useEffect(() => {
     let lastThumb = 0;
     const docId = store.doc.id;
+    const thumbFor = board ? renderBoardThumbnail : renderThumbnail;
     // A locked notebook keeps no page thumbnail: it would show its content in the library.
     const locked = !!initialMeta.lock;
     openEditors.set(docId, (openEditors.get(docId) ?? 0) + 1);
@@ -325,7 +333,7 @@ function EditorInner({
       // Refresh the library thumbnail at most every few seconds.
       if (locked || Date.now() - lastThumb < 3000 || !store.doc.pages[0]) return;
       lastThumb = Date.now();
-      void updateMeta(store.doc.id, { thumbnail: renderThumbnail(store.doc.pages[0], store.doc.id) });
+      void updateMeta(store.doc.id, { thumbnail: thumbFor(store.doc.pages[0], store.doc.id) });
     });
     const off = persister.onStatus(setStatus);
     const flush = () => void persister.flush();
@@ -337,7 +345,7 @@ function EditorInner({
       window.removeEventListener('pagehide', flush);
       document.removeEventListener('visibilitychange', onVis);
       openEditors.set(docId, (openEditors.get(docId) ?? 1) - 1);
-      const thumbnail = store.doc.pages[0] && !locked ? renderThumbnail(store.doc.pages[0], docId) : undefined;
+      const thumbnail = store.doc.pages[0] && !locked ? thumbFor(store.doc.pages[0], docId) : undefined;
       afterEditorClose(
         (async () => {
           if (thumbnail) await updateMeta(docId, { thumbnail });
@@ -358,7 +366,7 @@ function EditorInner({
     if (p && el) {
       el.scrollTop = p.scrollTop;
       el.scrollLeft = p.scrollLeft;
-    }
+    } else if (board) fitToContent();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -366,7 +374,7 @@ function EditorInner({
   const pendingAnchor = useRef<{ cx: number; cy: number; px: number; py: number } | null>(null);
   const setZoomAt = useCallback((next: number, clientX?: number, clientY?: number) => {
     const el = scrollerRef.current;
-    const z = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next));
+    const z = Math.min(MAX_ZOOM, Math.max(minZoom, next));
     if (!el || z === zoomRef.current) return;
     const r = el.getBoundingClientRect();
     const px = (clientX ?? r.left + r.width / 2) - r.left;
@@ -374,16 +382,43 @@ function EditorInner({
     pendingAnchor.current = { cx: (el.scrollLeft + px) / zoomRef.current, cy: (el.scrollTop + py) / zoomRef.current, px, py };
     zoomRef.current = z;
     setZoom(z);
-  }, []);
+  }, [minZoom]);
+
+  /** Whiteboard: zoom and scroll so everything drawn is in view (the middle of the board when empty). */
+  const pendingCentre = useRef<{ x: number; y: number } | null>(null);
+  const [fitCount, setFitCount] = useState(0);
+  const fitToContent = useCallback(() => {
+    const el = scrollerRef.current;
+    const page = store.doc.pages[0];
+    if (!el || !page) return;
+    const v = fitView(contentBounds(page), pageSize(page), { w: el.clientWidth, h: el.clientHeight }, { min: minZoom, max: MAX_ZOOM });
+    pendingCentre.current = { x: v.cx, y: v.cy };
+    zoomRef.current = v.zoom;
+    setZoom(v.zoom);
+    setFitCount((n) => n + 1);
+  }, [store, minZoom]);
 
   useLayoutEffect(() => {
-    const a = pendingAnchor.current;
     const el = scrollerRef.current;
+    const c = pendingCentre.current;
+    if (c && el) {
+      // Centre a page point (Fit): find where the page sits in the scrolled content.
+      pendingCentre.current = null;
+      const pageEl = el.querySelector('.page');
+      if (pageEl) {
+        const pr = pageEl.getBoundingClientRect(), sr = el.getBoundingClientRect();
+        el.scrollLeft = pr.left - sr.left + el.scrollLeft + c.x * zoom - el.clientWidth / 2;
+        el.scrollTop = pr.top - sr.top + el.scrollTop + c.y * zoom - el.clientHeight / 2;
+      }
+      return;
+    }
+    const a = pendingAnchor.current;
     if (!a || !el) return;
     pendingAnchor.current = null;
     el.scrollLeft = a.cx * zoom - a.px;
     el.scrollTop = a.cy * zoom - a.py;
-  }, [zoom]);
+  }, [zoom, fitCount]);
+
 
   // Ctrl/⌘ + wheel (and trackpad pinch, which browsers report as ctrl+wheel) zooms.
   useEffect(() => {
@@ -1077,6 +1112,14 @@ function EditorInner({
     setPdfExportOpen(false);
   };
 
+  const exportBoardPdf = async () => {
+    const page = store.doc.pages[0];
+    if (!page) return;
+    const { exportPdf } = await import('../io/pdfExport');
+    const bytes = await exportPdf({ ...store.doc, pages: [cropToContent(page)] }, store.doc.id, meta.title, { pages: [0], background: true });
+    downloadBlob(new Blob([bytes], { type: 'application/pdf' }), `${meta.title}.pdf`);
+  };
+
   const exportJson = async () => {
     const blobs = await getBlobs(doc.id, referencedBlobIds(doc));
     const blob = new Blob([JSON.stringify(toFile(meta, doc, blobs))], { type: 'application/json' });
@@ -1293,6 +1336,11 @@ function EditorInner({
           <button className="icon-btn" onClick={() => setZoomAt(zoom * 1.2)} aria-label="Zoom in">
             <Icon name="plus" />
           </button>
+          {board ? (
+            <button className="btn sm ghost" onClick={fitToContent} title="Zoom to fit everything on the board">
+              Fit
+            </button>
+          ) : (
           <button
             className="icon-btn"
             onClick={toggleScrollDir}
@@ -1301,7 +1349,9 @@ function EditorInner({
           >
             <Icon name={scrollDir === 'vertical' ? 'scrollVertical' : 'scrollHorizontal'} />
           </button>
+          )}
           <span className="divider" />
+          {!board && (
           <button
             className={`icon-btn ${sidebarOpen ? 'active' : ''}`}
             onClick={() => setSidebarOpen((o: boolean) => !o)}
@@ -1311,6 +1361,7 @@ function EditorInner({
           >
             <Icon name="sidebar" />
           </button>
+          )}
           <button
             className={`icon-btn ${searchOpen ? 'active' : ''}`}
             onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
@@ -1320,6 +1371,7 @@ function EditorInner({
           >
             <Icon name="search" />
           </button>
+          {!board && (
           <button
             className={`icon-btn ${currentBookmarked ? 'active' : ''}`}
             onClick={() => doc.pages[currentPage] && toggleBookmark(doc.pages[currentPage].id)}
@@ -1329,6 +1381,7 @@ function EditorInner({
           >
             <Icon name="bookmark" />
           </button>
+          )}
           {presenter.presenting ? (
             <button className="presenting-chip" onClick={presenter.stop} title="Stop presenting and close the presentation window">
               Presenting · Stop
@@ -1347,7 +1400,7 @@ function EditorInner({
           >
             <Icon name="readOnly" />
           </button>
-          {!readOnly && (
+          {!readOnly && !board && (
             <>
               <button className="icon-btn" onClick={addPage} aria-label="Add page after current" title="Add page">
                 <Icon name="addPage" />
@@ -1371,8 +1424,18 @@ function EditorInner({
               <Icon name="share" />
             </summary>
             <div className="menu-pop" onClick={(e) => (e.target as HTMLElement).closest('button') && e.currentTarget.closest('details')?.removeAttribute('open')}>
-              <button onClick={() => doc.pages[currentPage] && void exportPagePng(doc.pages[currentPage], doc.id, `${meta.title} p${currentPage + 1}.png`)}>Export page as PNG</button>
-              <button onClick={() => setPdfExportOpen(true)}>Export as PDF…</button>
+              {board ? (
+                <>
+                  {/* A board exports what is drawn on it, not the whole (mostly empty) page. */}
+                  <button onClick={() => doc.pages[0] && void exportPagePng(cropToContent(doc.pages[0]), doc.id, `${meta.title}.png`)}>Export as PNG</button>
+                  <button onClick={() => void exportBoardPdf()}>Export as PDF</button>
+                </>
+              ) : (
+                <>
+                  <button onClick={() => doc.pages[currentPage] && void exportPagePng(doc.pages[currentPage], doc.id, `${meta.title} p${currentPage + 1}.png`)}>Export page as PNG</button>
+                  <button onClick={() => setPdfExportOpen(true)}>Export as PDF…</button>
+                </>
+              )}
               <button onClick={() => void exportJson().catch((e: Error) => alert(`Export failed: ${e.message}`))}>Export notebook (.jnotes.json)</button>
             </div>
           </details>
@@ -1716,7 +1779,7 @@ function EditorInner({
       )}
 
       <div className="editor-body">
-      {sidebarOpen && (
+      {sidebarOpen && !board && (
         <PageSidebar
           pages={doc.pages}
           docId={doc.id}
@@ -1883,7 +1946,7 @@ function EditorInner({
           onRemove={linkDialog.link ? () => saveLink(null) : undefined}
         />
       )}
-      <div className="page-indicator" data-no-gesture hidden={!!zoomTarget}>
+      <div className="page-indicator" data-no-gesture hidden={!!zoomTarget || board}>
         {currentPage + 1} / {doc.pages.length}
       </div>
     </div>

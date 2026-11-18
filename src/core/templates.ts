@@ -165,3 +165,32 @@ export function templateLayout(template: Template, size: PageSize): TemplateLayo
   }
   return { lines, dots, labels };
 }
+
+/**
+ * The part of a template inside `region` (page units), for painting one tile of a large page.
+ * Grids and dots are generated for the region alone; other templates are filtered.
+ */
+export function templateLayoutIn(template: Template, size: PageSize, region: { minX: number; minY: number; maxX: number; maxY: number }): TemplateLayout {
+  const minX = Math.max(0, region.minX), minY = Math.max(0, region.minY);
+  const maxX = Math.min(size.w, region.maxX), maxY = Math.min(size.h, region.maxY);
+  const first = (lo: number) => Math.max(CELL, Math.ceil(lo / CELL) * CELL);
+  if (template === 'grid') {
+    const lines: TemplateLine[] = [];
+    for (let x = first(minX); x <= maxX && x < size.w; x += CELL) lines.push(vLine(x, minY, maxY, 'grid'));
+    for (let y = first(minY); y <= maxY && y < size.h; y += CELL) lines.push(hLine(y, minX, maxX, 'grid'));
+    return { lines, dots: [], labels: [] };
+  }
+  if (template === 'dotted') {
+    const dots: TemplateLayout['dots'] = [];
+    for (let x = first(minX - 1); x <= maxX + 1 && x < size.w; x += CELL) for (let y = first(minY - 1); y <= maxY + 1 && y < size.h; y += CELL) dots.push({ x, y });
+    return { lines: [], dots, labels: [] };
+  }
+  const all = templateLayout(template, size);
+  const inX = (a: number, b: number) => Math.max(a, b) >= minX && Math.min(a, b) <= maxX;
+  const inY = (a: number, b: number) => Math.max(a, b) >= minY && Math.min(a, b) <= maxY;
+  return {
+    lines: all.lines.filter((l) => inX(l.x1, l.x2) && inY(l.y1, l.y2)),
+    dots: all.dots.filter((d) => inX(d.x, d.x) && inY(d.y, d.y)),
+    labels: all.labels.filter((l) => inY(l.y - 16, l.y)),
+  };
+}
