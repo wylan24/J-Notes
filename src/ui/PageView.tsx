@@ -26,6 +26,7 @@ import { newTape, tapeAt, tapeRect } from '../core/tape';
 import { isScribble, scribbledStrokes } from '../core/scribble';
 import { inkKind, type InkKind } from '../core/contentKinds';
 import { CropOverlay } from './CropOverlay';
+import { SelectionMenu, type MenuAction } from './SelectionMenu';
 import { animatedResolver, ensureGif, gifFrameIndex, isAnimated, isStatic } from '../render/gifs';
 import { screenshotRect, type Rect } from '../core/screenshot';
 import { cropPatch, flipPatch } from '../core/imageEdit';
@@ -1078,6 +1079,62 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     setEditing({ item: soleItem, isNew: false });
   };
 
+  // --- Selection menu contents ------------------------------------------------------------
+  const moreActions: MenuAction[] = [];
+  if (soleItem?.kind === 'image') {
+    moreActions.push({ label: 'Flip horizontally', onClick: () => flipSoleImage('h') }, { label: 'Flip vertically', onClick: () => flipSoleImage('v') });
+  }
+  if (selected) {
+    moreActions.push(
+      { label: 'Bring to front', onClick: () => arrangeSelection('front') },
+      { label: 'Send to back', onClick: () => arrangeSelection('back') },
+      { label: 'Lock', onClick: lockSelection, title: "Lock: the eraser and lasso pass over it. Unlock from the Lasso tool's options." },
+    );
+    if (onEditLink) moreActions.push({ label: soleItem?.kind === 'link' ? 'Edit link' : 'Add link…', onClick: () => onEditLink(selected, soleItem?.kind === 'link' ? soleItem : null) });
+    if (onAddToOutline) moreActions.push({ label: 'Add to outline', onClick: () => onAddToOutline(selected) });
+    if (onSaveElement) moreActions.push({ label: 'Save as element', onClick: () => onSaveElement(selected) });
+  }
+
+  const styleRow =
+    soleItem?.kind === 'text' ? (
+      <>
+        <button
+          title="Font"
+          onClick={() => patchSoleItem({ font: FONT_KEYS[(FONT_KEYS.indexOf(soleItem.font as FontKey) + 1) % FONT_KEYS.length] })}
+          style={{ fontFamily: fontFamily(soleItem.font) }}
+        >
+          {FONT_LABELS[soleItem.font as FontKey] ?? 'Sans'}
+        </button>
+        <button aria-label="Smaller text" onClick={() => patchSoleItem({ size: Math.max(8, soleItem.size - 2) })}>
+          A−
+        </button>
+        <button aria-label="Larger text" onClick={() => patchSoleItem({ size: Math.min(96, soleItem.size + 2) })}>
+          A+
+        </button>
+        <span className="divider" />
+        {selectionColors.map((c) => (
+          <button key={c} className={`swatch-btn ${soleItem.color === c ? 'active' : ''}`} aria-label={`Recolor ${c}`} onClick={() => recolorSelection(c)}>
+            <span className="swatch" style={{ background: c }} />
+          </button>
+        ))}
+      </>
+    ) : soleItem?.kind === 'sticky' ? (
+      <>
+        <button onClick={() => patchSoleItem({ collapsed: !soleItem.collapsed })}>{soleItem.collapsed ? 'Expand' : 'Collapse'}</button>
+        {stickyColors.map((c) => (
+          <button key={c} className={`swatch-btn ${soleItem.color === c ? 'active' : ''}`} aria-label={`Note colour ${c}`} onClick={() => patchSoleItem({ color: c })}>
+            <span className="swatch" style={{ background: c }} />
+          </button>
+        ))}
+      </>
+    ) : selStrokes.length > 0 || selTexts.length > 0 ? (
+      selectionColors.map((c) => (
+        <button key={c} className="swatch-btn" aria-label={`Recolor ${c}`} onClick={() => recolorSelection(c)}>
+          <span className="swatch" style={{ background: c }} />
+        </button>
+      ))
+    ) : null;
+
   // --- Resize handle (one selected item) ----------------------------------------------
   const onResizeDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!soleItem) return;
@@ -1234,84 +1291,27 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
             )}
           </div>
           {!drag && !resize && !xform && (
-            <div
-              className="selection-menu"
-              data-no-gesture
-              style={{
-                left: selBounds.minX * scale,
-                // Above the selection (clear of the rotate handle), or below it near the top of the page.
-                top: (() => {
-                  const above = selBounds.minY * scale - (selected && (soleItem ? canRotate(soleItem) : true) ? 88 : 52);
-                  return above >= 4 ? above : selBounds.maxY * scale + 16;
-                })(),
-              }}
-              onPointerDown={(e) => e.stopPropagation()}
+            <SelectionMenu
+              key={selected ? `${selected.strokeIds.join()}|${selected.itemIds.join()}` : 'none'}
+              anchor={{ left: selBounds.minX * scale, top: selBounds.minY * scale, bottom: selBounds.maxY * scale }}
+              // Clear of the rotate handle when there is one.
+              clearance={selected && (soleItem ? canRotate(soleItem) : true) ? 48 : 12}
+              pageW={cssW}
+              more={moreActions}
+              styleRow={styleRow}
             >
               {(soleItem?.kind === 'text' || (soleItem?.kind === 'sticky' && !soleItem.collapsed)) && <button onClick={editSoleItem}>Edit</button>}
-              <button onClick={deleteSelection}>Delete</button>
+              {soleItem?.kind === 'link' && onFollowLink && <button onClick={() => onFollowLink(soleItem.target)}>Open link</button>}
               {onCopy && selected && (
                 <>
                   <button onClick={() => onCopy(selected, true)}>Cut</button>
                   <button onClick={() => onCopy(selected, false)}>Copy</button>
                 </>
               )}
-              {soleItem?.kind === 'image' && (
-                <>
-                  <button onClick={() => startCrop(soleItem)}>Crop</button>
-                  <button onClick={() => flipSoleImage('h')} title="Flip horizontally">Flip ↔</button>
-                  <button onClick={() => flipSoleImage('v')} title="Flip vertically">Flip ↕</button>
-                </>
-              )}
               <button onClick={duplicateSelection}>Duplicate</button>
-              <button onClick={lockSelection} title="Lock: the eraser and lasso pass over it. Unlock from the Lasso tool's options.">Lock</button>
-              <button onClick={() => arrangeSelection('front')} title="Bring to front">To front</button>
-              <button onClick={() => arrangeSelection('back')} title="Send to back">To back</button>
-              {onSaveElement && selected && <button onClick={() => onSaveElement(selected)}>Save as element</button>}
-              {onAddToOutline && selected && <button onClick={() => onAddToOutline(selected)}>Add to outline</button>}
-              {onEditLink && selected && (
-                <button onClick={() => onEditLink(selected, soleItem?.kind === 'link' ? soleItem : null)}>{soleItem?.kind === 'link' ? 'Edit link' : 'Link…'}</button>
-              )}
-              {soleItem?.kind === 'link' && onFollowLink && <button onClick={() => onFollowLink(soleItem.target)}>Open link</button>}
-              {soleItem?.kind === 'text' && (
-                <>
-                  <span className="divider" />
-                  <button
-                    title="Font"
-                    onClick={() => patchSoleItem({ font: FONT_KEYS[(FONT_KEYS.indexOf(soleItem.font as FontKey) + 1) % FONT_KEYS.length] })}
-                    style={{ fontFamily: fontFamily(soleItem.font) }}
-                  >
-                    {FONT_LABELS[soleItem.font as FontKey] ?? 'Sans'}
-                  </button>
-                  <button aria-label="Smaller text" onClick={() => patchSoleItem({ size: Math.max(8, soleItem.size - 2) })}>
-                    A−
-                  </button>
-                  <button aria-label="Larger text" onClick={() => patchSoleItem({ size: Math.min(96, soleItem.size + 2) })}>
-                    A+
-                  </button>
-                </>
-              )}
-              {soleItem?.kind === 'sticky' && (
-                <>
-                  <span className="divider" />
-                  <button onClick={() => patchSoleItem({ collapsed: !soleItem.collapsed })}>{soleItem.collapsed ? 'Expand' : 'Collapse'}</button>
-                  {stickyColors.map((c) => (
-                    <button key={c} className={`swatch-btn ${soleItem.color === c ? 'active' : ''}`} aria-label={`Note colour ${c}`} onClick={() => patchSoleItem({ color: c })}>
-                      <span className="swatch" style={{ background: c }} />
-                    </button>
-                  ))}
-                </>
-              )}
-              {(selStrokes.length > 0 || selTexts.length > 0) && (
-                <>
-                  <span className="divider" />
-                  {selectionColors.map((c) => (
-                    <button key={c} className="swatch-btn" aria-label={`Recolor ${c}`} onClick={() => recolorSelection(c)}>
-                      <span className="swatch" style={{ background: c }} />
-                    </button>
-                  ))}
-                </>
-              )}
-            </div>
+              <button onClick={deleteSelection}>Delete</button>
+              {soleItem?.kind === 'image' && <button onClick={() => startCrop(soleItem)}>Crop</button>}
+            </SelectionMenu>
           )}
         </>
       )}

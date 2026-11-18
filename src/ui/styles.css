@@ -211,6 +211,17 @@ button:disabled { cursor: default; opacity: 0.35; }
   position: absolute; display: flex; align-items: center; gap: 2px; padding: 4px;
   background: #1f1f22; color: #fff; border-radius: 10px; box-shadow: var(--shadow); white-space: nowrap; z-index: 5;
 }
+/* The selection bar: a row of actions, an optional row of style controls, and a More menu. */
+.selection-menu:has(> .sel-row) { flex-direction: column; align-items: stretch; width: max-content; }
+.sel-row { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
+.sel-row.sel-style { border-top: 1px solid rgba(255, 255, 255, 0.14); padding-top: 4px; margin-top: 2px; }
+.sel-more-btn { font-size: 16px !important; line-height: 1; letter-spacing: 1px; }
+.sel-more-btn[aria-expanded='true'] { background: rgba(255, 255, 255, 0.16) !important; }
+.sel-more {
+  position: absolute; top: calc(100% + 6px); right: 0; display: flex; flex-direction: column; min-width: 180px; padding: 4px;
+  background: #1f1f22; border-radius: 10px; box-shadow: var(--shadow);
+}
+.sel-more button { text-align: left; }
 .selection-menu button { border: 0; background: none; color: #fff; padding: 6px 10px; border-radius: 7px; font-size: 13px; }
 .selection-menu button:hover { background: rgba(255, 255, 255, 0.12); }
 .selection-menu .swatch-btn { padding: 0; }
@@ -662,3 +673,4 @@ button:disabled { cursor: default; opacity: 0.35; }
 
 /* A region screenshot waiting for an action. */
 .shot-box { position: absolute; pointer-events: none; border: 1.5px dashed var(--accent); background: rgba(47, 111, 222, 0.06); box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.12); z-index: 2; }
+.sel-more.up { top: auto; bottom: calc(100% + 6px); }
