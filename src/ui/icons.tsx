@@ -32,6 +32,7 @@ const paths: Record<string, string> = {
   'pen-fountain': 'M12 3l5 8-5 10-5-10zM12 11v4M7 11h10',
   'pen-ball': 'M9 3h6v12l-3 6-3-6zM9 15h6',
   'pen-brush': 'M19 4l-7 8M12 12c-3-1-6 1-6 4 0 2-1 3-2 4 5 0 10-2 8-8z',
+  'pen-pencil': 'M16.5 3.5l4 4L9 19l-5 1.5L5.5 15.5zM14 6l4 4M5.5 15.5l3.5 3.5',
   straight: 'M4 20L20 4M4 20h3M20 4h-3',
   text: 'M5 7V4.5h14V7M12 4.5v15M9 19.5h6',
   sticky: 'M4.5 4.5h15v9l-6 6h-9zM13.5 19.5v-6h6',

@@ -35,7 +35,7 @@ export const DEFAULT_PAPER: Paper = 'white';
 
 export type InkTool = 'pen' | 'highlighter';
 export type ToolKind = InkTool | 'shapes' | 'text' | 'sticky' | 'eraser' | 'lasso' | 'laser';
-export type PenStyle = 'fountain' | 'ball' | 'brush';
+export type PenStyle = 'fountain' | 'ball' | 'brush' | 'pencil';
 export type EraseMode = 'stroke' | 'partial';
 export type Template = 'blank' | 'ruled' | 'grid' | 'dotted' | 'legal' | 'cornell' | 'music' | 'planner';
 

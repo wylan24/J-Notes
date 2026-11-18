@@ -5,7 +5,7 @@ import { advance, back, newLine, panelToPage, resizeTarget, shouldAdvance, ZOOM_
 import { paintRegion } from '../render/page';
 import { imageResolver, onImagesLoaded } from '../render/items';
 import { pdfResolver } from '../render/pdf';
-import { buildStrokePath, HIGHLIGHTER_ALPHA } from '../render/stroke';
+import { HIGHLIGHTER_ALPHA, paintInk } from '../render/stroke';
 import { Icon } from './icons';
 import { newInkStroke, pressureOf, timeStamp } from './ink';
 import type { ToolState } from './PageView';
@@ -94,7 +94,7 @@ export function ZoomWindow({ store, page, target, setTarget, tool, penOnly, onCl
     ctx.setTransform(k, 0, 0, k, -target.x * k, -target.y * k);
     ctx.fillStyle = a.stroke.color;
     if (a.stroke.tool === 'highlighter') ctx.globalAlpha = HIGHLIGHTER_ALPHA;
-    ctx.fill(buildStrokePath(a.stroke.points, a.stroke, false));
+    paintInk(ctx, a.stroke.points, a.stroke, false);
   };
 
   const onDown = (e: React.PointerEvent<HTMLCanvasElement>) => {

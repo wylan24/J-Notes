@@ -106,7 +106,7 @@ describe('export as PDF', () => {
     const bytes = await sourcePdf();
     const pages = pdfPages('src', [pdfPageSize(612, 792), pdfPageSize(612, 792), pdfPageSize(792, 612)]);
     pages[0] = { ...pages[0], strokes: [stroke('h', 'highlighter', '#ffd400'), stroke('p', 'pen', '#c00')] };
-    pages.push({ id: 'notes', template: 'cornell', strokes: [stroke('q', 'pen', '#000')], items: [{ id: 't', kind: 'text', x: 120, y: 140, w: 300, h: 30, text: 'Café notes ✓', font: 'serif', size: 18, color: '#333' }] });
+    pages.push({ id: 'notes', template: 'cornell', strokes: [stroke('q', 'pen', '#000'), { ...stroke('g', 'pen', '#333'), penStyle: 'pencil' }], items: [{ id: 't', kind: 'text', x: 120, y: 140, w: 300, h: 30, text: 'Café notes ✓', font: 'serif', size: 18, color: '#333' }] });
     const doc: NotebookDoc = { id: 'n', pages };
     await createNotebook(
       { id: 'n', title: 'Bio', cover: '#000', template: 'blank', createdAt: 1, updatedAt: 1, favourite: false, trashedAt: null, pageCount: pages.length },

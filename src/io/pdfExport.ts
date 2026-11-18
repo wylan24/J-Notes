@@ -10,6 +10,7 @@ import { templateLayout } from '../core/templates';
 import { HIGHLIGHTER_ALPHA, strokeSvgPath } from '../render/stroke';
 import { LINK_COLOR } from '../render/items';
 import { LINK_PAD, LINK_TEXT_SIZE } from '../core/links';
+import { dabsByLevel, pencilAlpha, pencilDabs, type Dab } from '../core/pencil';
 import { PAPER_STYLES } from '../render/page';
 import { getBlob } from '../storage/db';
 
@@ -188,6 +189,12 @@ async function toPng(bytes: ArrayBuffer, type: string): Promise<ArrayBuffer> {
   return blob.arrayBuffer();
 }
 
+/** A pencil stroke's dabs at one opacity level, as one SVG path of circles. */
+function dabsPath(dabs: readonly Dab[]): string {
+  const f = (n: number) => Math.round(n * 100) / 100;
+  return dabs.map((d) => `M${f(d.x - d.r)} ${f(d.y)}a${f(d.r)} ${f(d.r)} 0 1 0 ${f(2 * d.r)} 0a${f(d.r)} ${f(d.r)} 0 1 0 ${f(-2 * d.r)} 0Z`).join('');
+}
+
 /** Draws in page units (top-left origin) onto a PDF page through a placement. */
 class PageDrawer {
   constructor(
@@ -238,6 +245,7 @@ class PageDrawer {
   }
 
   stroke(s: Stroke): void {
+    if (s.tool === 'pen' && s.penStyle === 'pencil') return this.pencil(s);
     const d = strokeSvgPath(s);
     if (!d) return;
     const [x, y] = this.place.at(0, 0);
@@ -251,5 +259,13 @@ class PageDrawer {
       opacity: highlighter ? HIGHLIGHTER_ALPHA : 1,
       blendMode: highlighter ? this.lib.BlendMode.Multiply : undefined,
     });
+  }
+
+  /** Pencil: its dabs as vector circles, one path per opacity level, so pressure survives (the grain doesn't). */
+  private pencil(s: Stroke): void {
+    const [x, y] = this.place.at(0, 0);
+    for (const [level, dabs] of dabsByLevel(pencilDabs(s.points, s.width, s.simulatePressure))) {
+      this.page.drawSvgPath(dabsPath(dabs), { x, y, scale: this.place.s, rotate: this.rotate, color: this.color(s.color), opacity: pencilAlpha(level) });
+    }
   }
 }

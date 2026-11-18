@@ -64,6 +64,7 @@ const PEN_STYLES: { style: PenStyle; label: string }[] = [
   { style: 'fountain', label: 'Fountain pen' },
   { style: 'ball', label: 'Ball pen' },
   { style: 'brush', label: 'Brush pen' },
+  { style: 'pencil', label: 'Pencil' },
 ];
 const ERASER_SIZES = [6, 12, 22];
 const TOOLS: { kind: ToolKind; label: string; key: string }[] = [

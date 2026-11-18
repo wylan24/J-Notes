@@ -41,7 +41,7 @@ import type { DocumentStore } from '../core/store';
 import { paintPage, paintStrokes, PAPER_STYLES } from '../render/page';
 import { imageResolver, measurer, onImagesLoaded } from '../render/items';
 import { pdfResolver } from '../render/pdf';
-import { buildStrokePath } from '../render/stroke';
+import { paintInk } from '../render/stroke';
 
 export interface ToolState {
   kind: ToolKind;
@@ -338,7 +338,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       ctx.fillStyle = a.stroke.color;
       if (a.stroke.tool === 'highlighter') ctx.globalAlpha = 0.38;
       const style = a.snap ? { ...a.stroke, simulatePressure: false, shape: true } : a.stroke;
-      for (const pts of paths) ctx.fill(buildStrokePath(pts, style, !!a.snap));
+      for (const pts of paths) paintInk(ctx, pts, style, !!a.snap);
     } else if (a.kind === 'erase') {
       ctx.beginPath();
       ctx.arc(a.cursor.x, a.cursor.y, a.r, 0, Math.PI * 2);

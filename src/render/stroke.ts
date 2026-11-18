@@ -1,5 +1,6 @@
 import { getStroke, type StrokeOptions } from 'perfect-freehand';
 import type { InputPoint, Stroke } from '../core/model';
+import { dabsByLevel, pencilAlpha, pencilDabs, type Dab } from '../core/pencil';
 
 export const HIGHLIGHTER_ALPHA = 0.38;
 
@@ -101,7 +102,12 @@ export function strokePath(s: Stroke): Path2D {
   return p;
 }
 
-export function paintStroke(ctx: CanvasRenderingContext2D, s: Stroke, path: Path2D = strokePath(s), alpha = 1): void {
+export function paintStroke(ctx: CanvasRenderingContext2D, s: Stroke, path?: Path2D, alpha = 1): void {
+  if (s.tool === 'pen' && s.penStyle === 'pencil') {
+    paintPencilLevels(ctx, pencilPaths(s), s.color, alpha);
+    return;
+  }
+  path ??= strokePath(s);
   ctx.save();
   ctx.globalAlpha = alpha;
   if (s.tool === 'highlighter') {
@@ -110,5 +116,98 @@ export function paintStroke(ctx: CanvasRenderingContext2D, s: Stroke, path: Path
   }
   ctx.fillStyle = s.color;
   ctx.fill(path);
+  ctx.restore();
+}
+
+// --- Pencil --------------------------------------------------------------------------------
+
+/**
+ * Ink still being written (or a shape it snapped to), on the live layer: the same look as when it
+ * is committed. The caller has set fill colour and highlighter alpha for ordinary ink.
+ */
+export function paintInk(ctx: CanvasRenderingContext2D, points: InputPoint[], style: InkStyle & Pick<Stroke, 'color'>, complete: boolean): void {
+  if (style.tool === 'pen' && style.penStyle === 'pencil') {
+    paintPencilLevels(ctx, levelPaths(pencilDabs(points, style.width, style.simulatePressure)), style.color, 1);
+    return;
+  }
+  ctx.fill(buildStrokePath(points, style, complete));
+}
+
+function levelPaths(dabs: readonly Dab[]): Map<number, Path2D> {
+  const out = new Map<number, Path2D>();
+  for (const [level, list] of dabsByLevel(dabs)) {
+    const p = new Path2D();
+    for (const d of list) {
+      p.moveTo(d.x + d.r, d.y);
+      p.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+    }
+    out.set(level, p);
+  }
+  return out;
+}
+
+const pencilCache = new WeakMap<Stroke, Map<number, Path2D>>();
+function pencilPaths(s: Stroke): Map<number, Path2D> {
+  let p = pencilCache.get(s);
+  if (!p) {
+    p = levelPaths(pencilDabs(s.points, s.width, s.simulatePressure));
+    pencilCache.set(s, p);
+  }
+  return p;
+}
+
+/** Device pixels per grain speck: fine enough to read as texture, coarse enough to see. */
+const GRAIN_PX = 1.5;
+const GRAIN_TILE = 64;
+let grainTile: HTMLCanvasElement | null = null;
+const tinted = new Map<string, HTMLCanvasElement>();
+
+/** A tile of paper grain: mostly solid, with lighter specks and a few gaps. The same every time (seeded). */
+function grain(): HTMLCanvasElement {
+  if (grainTile) return grainTile;
+  const c = document.createElement('canvas');
+  c.width = c.height = GRAIN_TILE;
+  const ctx = c.getContext('2d')!;
+  const img = ctx.createImageData(GRAIN_TILE, GRAIN_TILE);
+  let seed = 0x9e3779b9;
+  const rand = () => ((seed = (Math.imul(seed ^ (seed >>> 15), 0x2c1b3c6d) + 0x6d2b79f5) >>> 0) / 4294967296);
+  for (let i = 0; i < GRAIN_TILE * GRAIN_TILE; i++) {
+    const r = rand();
+    img.data[i * 4 + 3] = r < 0.12 ? 25 : Math.round(255 * (0.55 + 0.45 * rand()));
+  }
+  ctx.putImageData(img, 0, 0);
+  return (grainTile = c);
+}
+
+/** The grain tile in an ink colour. */
+function tintedGrain(color: string): HTMLCanvasElement {
+  let t = tinted.get(color);
+  if (!t) {
+    t = document.createElement('canvas');
+    t.width = t.height = GRAIN_TILE;
+    const ctx = t.getContext('2d')!;
+    ctx.drawImage(grain(), 0, 0);
+    ctx.globalCompositeOperation = 'source-in';
+    ctx.fillStyle = color;
+    ctx.fillRect(0, 0, GRAIN_TILE, GRAIN_TILE);
+    if (tinted.size > 32) tinted.clear();
+    tinted.set(color, t);
+  }
+  return t;
+}
+
+/** Fill each opacity level's dabs with grain in the ink colour. Grain is sized in device pixels, so it stays crisp at any zoom. */
+function paintPencilLevels(ctx: CanvasRenderingContext2D, levels: Map<number, Path2D>, color: string, alpha: number): void {
+  const pattern = ctx.createPattern(tintedGrain(color), 'repeat');
+  if (!pattern) return;
+  const m = ctx.getTransform();
+  const k = Math.hypot(m.a, m.b) || 1;
+  pattern.setTransform(new DOMMatrix().scale(GRAIN_PX / k));
+  ctx.save();
+  ctx.fillStyle = pattern;
+  for (const [level, path] of levels) {
+    ctx.globalAlpha = alpha * pencilAlpha(level);
+    ctx.fill(path);
+  }
   ctx.restore();
 }
