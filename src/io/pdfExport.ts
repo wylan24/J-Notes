@@ -4,7 +4,8 @@
 // background, template, images and text boxes, highlighter, pen, sticky notes.
 import type { PDFDocument, PDFFont, PDFImage, PDFPage } from 'pdf-lib';
 import { itemRect, LINE_HEIGHT, STICKY_ICON, STICKY_PAD, STICKY_TEXT_SIZE, TEXT_PAD, textLines, wrapLines } from '../core/items';
-import { pagePaper, pageSize, type NotebookDoc, type Page, type PageItem, type Stroke } from '../core/model';
+import { bulletShape, layoutRich, markerPlace } from '../core/richText';
+import { pagePaper, pageSize, type RichBlock, type NotebookDoc, type Page, type PageItem, type Stroke } from '../core/model';
 import { hexToRgb, placement, type Placement } from '../core/pdfPlacement';
 import { templateLayout } from '../core/templates';
 import { HIGHLIGHTER_ALPHA, steadied, strokeSvgPath } from '../render/stroke';
@@ -100,6 +101,10 @@ class ExportContext {
       else draw.rect(it.x, it.y, it.w, it.h, '#ecebe7');
       return;
     }
+    if (it.kind === 'text' && it.rich) {
+      await this.richText(draw, it.rich, it.x + TEXT_PAD, it.y + TEXT_PAD, it.w - 2 * TEXT_PAD, it.size, it.font, it.color, Infinity);
+      return;
+    }
     if (it.kind === 'text') {
       const font = await this.font(it.font, false);
       const fit = encodable(font);
@@ -133,12 +138,42 @@ class ExportContext {
       return;
     }
     draw.rect(it.x, it.y, it.w, it.h, it.color);
+    if (it.rich) {
+      await this.richText(draw, it.rich, it.x + STICKY_PAD, it.y + STICKY_PAD, it.w - 2 * STICKY_PAD, STICKY_TEXT_SIZE, 'sans', '#1d1d1f', it.h - 2 * STICKY_PAD);
+      return;
+    }
     const font = await this.font('sans', false);
     const fit = encodable(font);
     const lines = wrapLines(it.text, it.w - 2 * STICKY_PAD, (s) => font.widthOfTextAtSize(fit(s), STICKY_TEXT_SIZE));
     // Keep to the note's box, as the screen clips it.
     const max = Math.max(0, Math.floor((it.h - 2 * STICKY_PAD) / (STICKY_TEXT_SIZE * LINE_HEIGHT)));
     draw.textLines(lines.slice(0, max).map(fit), it.x + STICKY_PAD, it.y + STICKY_PAD, STICKY_TEXT_SIZE, font, '#1d1d1f');
+  }
+
+  /** Formatted text, laid out as on screen with the PDF fonts' widths; lines past `maxH` are left off. */
+  private async richText(draw: PageDrawer, blocks: RichBlock[], x: number, y: number, w: number, size: number, family: string, color: string, maxH: number): Promise<void> {
+    const fonts = await Promise.all([false, true].flatMap((b) => [false, true].map((i) => this.font(family, b, i))));
+    const pick = (b?: boolean, i?: boolean) => fonts[(b ? 2 : 0) + (i ? 1 : 0)];
+    const fits = fonts.map(encodable);
+    const fit = (s: string, b?: boolean, i?: boolean) => fits[(b ? 2 : 0) + (i ? 1 : 0)](s);
+    const lines = layoutRich(blocks, w, size, (s, b, i) => pick(b, i).widthOfTextAtSize(fit(s, b, i), size));
+    const lh = size * LINE_HEIGHT;
+    const shown = lines.slice(0, Math.max(0, Math.floor(maxH / lh)));
+    shown.forEach((line, n) => {
+      const top = y + n * lh;
+      for (const p of line.pieces) if (p.hl) draw.rect(x + p.x, top, p.w, lh, p.hl);
+      if (line.marker) {
+        const shape = bulletShape(line.marker.text);
+        const { cx, right, r } = markerPlace(line.marker, size);
+        if (shape === 'square') draw.rect(x + cx - r, top + lh / 2 - r, 2 * r, 2 * r, color);
+        else if (shape) draw.circle(x + cx, top + lh / 2, shape === 'circle' ? r * 0.85 : r, color, shape === 'disc');
+        else {
+          const label = fit(line.marker.text);
+          draw.textLines([label], x + right - pick().widthOfTextAtSize(label, size), top, size, pick(), color);
+        }
+      }
+      for (const p of line.pieces) draw.textLines([fit(p.text, p.b, p.i)], x + p.x, top, size, pick(p.b, p.i), color);
+    });
   }
 
   private source(blobId: string): Promise<PDFDocument> {
@@ -175,10 +210,20 @@ class ExportContext {
   }
 
   /** The standard PDF font closest to an app font. Standard fonts need no embedding but only cover Latin text. */
-  private font(key: string, bold: boolean): Promise<PDFFont> {
+  private font(key: string, bold: boolean, italic = false): Promise<PDFFont> {
     const F = this.lib.StandardFonts;
     const name =
-      key === 'serif' ? (bold ? F.TimesRomanBold : F.TimesRoman) : key === 'mono' ? (bold ? F.CourierBold : F.Courier) : bold ? F.HelveticaBold : F.Helvetica;
+      key === 'serif'
+        ? italic
+          ? bold ? F.TimesRomanBoldItalic : F.TimesRomanItalic
+          : bold ? F.TimesRomanBold : F.TimesRoman
+        : key === 'mono'
+          ? italic
+            ? bold ? F.CourierBoldOblique : F.CourierOblique
+            : bold ? F.CourierBold : F.Courier
+          : italic
+            ? bold ? F.HelveticaBoldOblique : F.HelveticaOblique
+            : bold ? F.HelveticaBold : F.Helvetica;
     let p = this.fonts.get(name);
     if (!p) {
       p = this.out.embedFont(name);
@@ -267,6 +312,14 @@ class PageDrawer {
     } finally {
       this.page.pushOperators(L.popGraphicsState());
     }
+  }
+
+  /** A dot (filled) or ring, centred at (cx, cy), in page units. */
+  circle(cx: number, cy: number, r: number, color: string, filled: boolean): void {
+    const [x, y] = this.place.at(cx, cy);
+    const c = this.color(color);
+    const rr = r * this.place.s;
+    this.page.drawEllipse({ x, y, xScale: rr, yScale: rr, ...(filled ? { color: c } : { borderColor: c, borderWidth: rr * 0.35 }) });
   }
 
   /** A filled polygon, in page units. */

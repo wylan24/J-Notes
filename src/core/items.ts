@@ -1,11 +1,13 @@
 // Geometry, layout and factories for page items (text boxes, images, sticky notes).
 // Pure: text measuring is passed in, so this runs in Node tests and the renderer alike.
-import { DEFAULT_PAGE_SIZE, type ImageItem, type PageSize, type Page, type PageItem, type StickyItem, type TextItem } from './model';
+import { DEFAULT_PAGE_SIZE, type RichBlock, type ImageItem, type PageSize, type Page, type PageItem, type StickyItem, type TextItem } from './model';
 import type { Bounds, Vec } from './geometry';
 import { newId } from './ids';
 import { lineBounds, pointOnLine } from './shapeItems';
+import { layoutRich, type RichLine } from './richText';
 
-export type MeasureText = (s: string) => number;
+/** Width of `s` in the item's font; formatted text also asks for bold and italic widths. */
+export type MeasureText = (s: string, bold?: boolean, italic?: boolean) => number;
 
 export const TEXT_PAD = 4;
 export const LINE_HEIGHT = 1.3;
@@ -61,8 +63,14 @@ export function textLines(t: Pick<TextItem, 'text' | 'w'>, measure: MeasureText)
   return wrapLines(t.text, Math.max(1, t.w - 2 * TEXT_PAD), measure);
 }
 
-export function textHeight(t: Pick<TextItem, 'text' | 'w' | 'size'>, measure: MeasureText): number {
-  return textLines(t, measure).length * t.size * LINE_HEIGHT + 2 * TEXT_PAD;
+/** A text box's lines when formatted: laid out from its blocks in its box. */
+export function richTextLines(t: Pick<TextItem, 'w' | 'size'> & { rich: RichBlock[] }, measure: MeasureText): RichLine[] {
+  return layoutRich(t.rich, Math.max(1, t.w - 2 * TEXT_PAD), t.size, measure);
+}
+
+export function textHeight(t: Pick<TextItem, 'text' | 'w' | 'size' | 'rich'>, measure: MeasureText): number {
+  const lines = t.rich ? richTextLines({ ...t, rich: t.rich }, measure).length : textLines(t, measure).length;
+  return lines * t.size * LINE_HEIGHT + 2 * TEXT_PAD;
 }
 
 /** The item's box before rotation (a collapsed sticky note is its icon). */

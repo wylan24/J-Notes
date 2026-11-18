@@ -4,7 +4,8 @@ import { linePoints } from '../core/shapes';
 import { buildStrokePath } from './stroke';
 import type { Vec } from '../core/geometry';
 import { LINK_PAD, LINK_TEXT_SIZE } from '../core/links';
-import { fontFamily, LINE_HEIGHT, STICKY_ICON, STICKY_PAD, STICKY_TEXT_SIZE, TEXT_PAD, textLines, wrapLines, type MeasureText } from '../core/items';
+import { bulletShape, layoutRich, markerPlace, type RichLine } from '../core/richText';
+import { fontFamily, richTextLines, LINE_HEIGHT, STICKY_ICON, STICKY_PAD, STICKY_TEXT_SIZE, TEXT_PAD, textLines, wrapLines, type MeasureText } from '../core/items';
 import { getBlob } from '../storage/db';
 import { cropOf, itemMatrix } from '../core/imageEdit';
 import { isIdentity } from '../core/transform';
@@ -86,8 +87,8 @@ export function imageResolver(docId: string): ImageResolver {
 
 let measureCtx: CanvasRenderingContext2D | null = null;
 
-export function canvasFont(font: string, size: number): string {
-  return `${size}px ${fontFamily(font)}`;
+export function canvasFont(font: string, size: number, bold = false, italic = false): string {
+  return `${italic ? 'italic ' : ''}${bold ? 'bold ' : ''}${size}px ${fontFamily(font)}`;
 }
 
 /** A measureText for the given font, for layout that matches what the canvas draws. */
@@ -95,8 +96,8 @@ export function measurer(font: string, size: number): MeasureText {
   measureCtx ??= document.createElement('canvas').getContext('2d');
   const ctx = measureCtx;
   if (!ctx) return (s) => s.length * size * 0.55;
-  return (s) => {
-    ctx.font = canvasFont(font, size);
+  return (s, bold, italic) => {
+    ctx.font = canvasFont(font, size, bold, italic);
     return ctx.measureText(s).width;
   };
 }
@@ -146,7 +147,56 @@ function paintLines(ctx: CanvasRenderingContext2D, lines: string[], x: number, y
   lines.forEach((line, i) => ctx.fillText(line, x, y + (i + 0.5) * lh));
 }
 
+/**
+ * Formatted lines, starting at (x, y): highlights behind each line, then markers and text, each
+ * vertically centred in its line box as plain text is.
+ */
+export function paintRich(ctx: CanvasRenderingContext2D, lines: RichLine[], x: number, y: number, size: number, font: string, color: string) {
+  const lh = size * LINE_HEIGHT;
+  ctx.save();
+  ctx.textBaseline = 'middle';
+  lines.forEach((line, i) => {
+    const top = y + i * lh;
+    for (const p of line.pieces) {
+      if (!p.hl) continue;
+      ctx.fillStyle = p.hl;
+      ctx.fillRect(x + p.x, top, p.w, lh);
+    }
+    ctx.fillStyle = color;
+    if (line.marker) {
+      const shape = bulletShape(line.marker.text);
+      const { cx, right, r } = markerPlace(line.marker, size);
+      const cy = top + lh / 2;
+      if (shape === 'square') ctx.fillRect(x + cx - r, cy - r, 2 * r, 2 * r);
+      else if (shape) {
+        ctx.beginPath();
+        ctx.arc(x + cx, cy, shape === 'circle' ? r * 0.85 : r, 0, Math.PI * 2);
+        if (shape === 'disc') ctx.fill();
+        else {
+          ctx.strokeStyle = color;
+          ctx.lineWidth = r * 0.35;
+          ctx.stroke();
+        }
+      } else {
+        ctx.font = canvasFont(font, size);
+        ctx.textAlign = 'right';
+        ctx.fillText(line.marker.text, x + right, cy);
+        ctx.textAlign = 'left';
+      }
+    }
+    for (const p of line.pieces) {
+      ctx.font = canvasFont(font, size, !!p.b, !!p.i);
+      ctx.fillText(p.text, x + p.x, top + lh / 2);
+    }
+  });
+  ctx.restore();
+}
+
 function paintText(ctx: CanvasRenderingContext2D, it: TextItem) {
+  if (it.rich) {
+    paintRich(ctx, richTextLines({ ...it, rich: it.rich }, measurer(it.font, it.size)), it.x + TEXT_PAD, it.y + TEXT_PAD, it.size, it.font, it.color);
+    return;
+  }
   ctx.save();
   ctx.font = canvasFont(it.font, it.size);
   ctx.fillStyle = it.color;
@@ -192,8 +242,13 @@ function paintSticky(ctx: CanvasRenderingContext2D, it: StickyItem) {
   ctx.font = canvasFont('sans', STICKY_TEXT_SIZE);
   ctx.fillStyle = '#1d1d1f';
   ctx.textBaseline = 'middle';
-  const lines = wrapLines(it.text, it.w - 2 * STICKY_PAD, measurer('sans', STICKY_TEXT_SIZE));
-  paintLines(ctx, lines, it.x + STICKY_PAD, it.y + STICKY_PAD, STICKY_TEXT_SIZE);
+  if (it.rich) {
+    const lines = layoutRich(it.rich, it.w - 2 * STICKY_PAD, STICKY_TEXT_SIZE, measurer('sans', STICKY_TEXT_SIZE));
+    paintRich(ctx, lines, it.x + STICKY_PAD, it.y + STICKY_PAD, STICKY_TEXT_SIZE, 'sans', '#1d1d1f');
+  } else {
+    const lines = wrapLines(it.text, it.w - 2 * STICKY_PAD, measurer('sans', STICKY_TEXT_SIZE));
+    paintLines(ctx, lines, it.x + STICKY_PAD, it.y + STICKY_PAD, STICKY_TEXT_SIZE);
+  }
   ctx.restore();
 }
 

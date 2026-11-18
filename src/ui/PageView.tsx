@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react';
 import {
   pagePaper,
   pageSize,
@@ -14,6 +14,7 @@ import {
   type Page,
   type PageItem,
   type PenStyle,
+  type RichBlock,
   type StickyItem,
   type Stroke,
   type TextItem,
@@ -29,6 +30,8 @@ import { isScribble, scribbledStrokes } from '../core/scribble';
 import { inkKind, type InkKind } from '../core/contentKinds';
 import { CropOverlay } from './CropOverlay';
 import { SelectionMenu, type MenuAction } from './SelectionMenu';
+import type { RichEditorHandle } from './RichTextEditor';
+import { itemBlocks, richPatch } from '../core/richText';
 import { ShapeStyleRow } from './ShapeStyle';
 import { bendHandle, bendTo, itemFromShape, lineEnds, lineGeometry, touchesCircle } from '../core/shapeItems';
 import { anchorPoint, attachDrawnLine, attachmentAt, followConnectors, quickConnectOps, SIDE_AT, SIDES, type Side } from '../core/connectors';
@@ -166,6 +169,15 @@ const FONT_KEYS = Object.keys(FONTS) as FontKey[];
 /** Measuring for an item's text, so stored heights match what the canvas draws. */
 const measureFor = (it: PageItem) => (it.kind === 'text' ? measurer(it.font, it.size) : measurer('sans', STICKY_TEXT_SIZE));
 
+// The formatted-text editor is large; it loads the first time something is edited.
+const RichTextEditor = lazy(() => import('./RichTextEditor'));
+
+/** The item with its formatting set, or without a `rich` field when it has none. */
+function withRich<T extends EditableItem>(it: T, rich: RichBlock[] | undefined): T {
+  const { rich: _old, ...rest } = it;
+  return (rich ? { ...rest, rich } : rest) as T;
+}
+
 const HOLD_MS = 550;
 /** How near (screen px) an end must be to an item's edge to attach to it. */
 const ATTACH_SLOP_PX = 14;
@@ -289,7 +301,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   const itemOverride = useRef<Map<string, PageItem> | null>(null);
   const [editing, setEditingState] = useState<Editing | null>(null);
   const editingRef = useRef<Editing | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorApi = useRef<RichEditorHandle | null>(null);
   const [resize, setResize] = useState<{ pointerId: number; sx: number; sy: number; item: PageItem; preview: PageItem } | null>(null);
   const visibleRef = useRef(false);
   // Dragging a selected line's end or bend handle.
@@ -499,25 +511,27 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   const commitEdit = () => {
     const ed = editingRef.current;
     if (!ed) return;
-    const text = textareaRef.current?.value ?? ed.item.text;
+    // Until the editor has loaded nothing can have been typed, so the item keeps its text.
+    const { text, rich } = richPatch(editorApi.current?.getBlocks() ?? itemBlocks(ed.item));
     const cur = pageRef.current;
     const it = ed.item;
+    const changed = text !== it.text || JSON.stringify(rich) !== JSON.stringify(it.rich);
     let ops: DocOp[] = [];
     if (it.kind === 'text') {
-      const h = textHeight({ ...it, text }, measureFor(it));
+      const h = textHeight({ ...it, text, rich }, measureFor(it));
       if (!text.trim()) {
         const op = !ed.isNew && removeItemsOp(cur, [it.id]);
         if (op) ops = [op];
       } else if (ed.isNew) {
-        ops = [{ type: 'items.added', pageId: cur.id, items: [{ ...it, text, h }] }];
-      } else if (text !== it.text) {
-        const op = updateItemOp(cur, it.id, { text, h });
+        ops = [{ type: 'items.added', pageId: cur.id, items: [withRich({ ...it, text, h }, rich)] }];
+      } else if (changed) {
+        const op = updateItemOp(cur, it.id, { text, rich, h });
         if (op) ops = [op];
       }
     } else if (ed.isNew) {
-      ops = [{ type: 'items.added', pageId: cur.id, items: [{ ...it, text }] }];
-    } else if (text !== it.text) {
-      const op = updateItemOp(cur, it.id, { text });
+      ops = [{ type: 'items.added', pageId: cur.id, items: [withRich({ ...it, text }, rich)] }];
+    } else if (changed) {
+      const op = updateItemOp(cur, it.id, { text, rich });
       if (op) ops = [op];
     }
     editingRef.current = null;
@@ -525,21 +539,6 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     setEditingState(null);
     if (ops.length) store.dispatch(ops);
     else renderBase();
-  };
-
-  // Focus the editor once it is on screen, with the caret at the end.
-  useEffect(() => {
-    const ta = textareaRef.current;
-    if (!editing || !ta) return;
-    ta.focus();
-    ta.setSelectionRange(ta.value.length, ta.value.length);
-    autoGrow(ta);
-  }, [editing]);
-
-  const autoGrow = (ta: HTMLTextAreaElement) => {
-    if (editingRef.current?.item.kind !== 'text') return;
-    ta.style.height = 'auto';
-    ta.style.height = `${ta.scrollHeight}px`;
   };
 
   /** Text and Sticky tools: tap an item of that kind to edit it, or empty paper to add one. */
@@ -1480,43 +1479,39 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
         </div>
       )}
       {editing && (
-        <textarea
-          ref={textareaRef}
-          className={`item-editor ${editing.item.kind}`}
-          data-no-gesture
-          defaultValue={editing.item.text}
-          aria-label={editing.item.kind === 'text' ? 'Text box' : 'Sticky note'}
-          spellCheck
-          onBlur={commitEdit}
-          onInput={(e) => autoGrow(e.currentTarget)}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') e.currentTarget.blur();
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-          style={
-            editing.item.kind === 'text'
-              ? {
-                  left: editing.item.x * scale,
-                  top: editing.item.y * scale,
-                  width: editing.item.w * scale,
-                  minHeight: editing.item.h * scale,
-                  padding: TEXT_PAD * scale,
-                  font: `${editing.item.size * scale}px/${LINE_HEIGHT} ${fontFamily(editing.item.font)}`,
-                  color: editing.item.color,
-                  ...turnStyle(editing.item),
-                }
-              : {
-                  left: editing.item.x * scale,
-                  top: editing.item.y * scale,
-                  width: editing.item.w * scale,
-                  height: editing.item.h * scale,
-                  padding: STICKY_PAD * scale,
-                  font: `${STICKY_TEXT_SIZE * scale}px/${LINE_HEIGHT} ${fontFamily('sans')}`,
-                  background: editing.item.color,
-                  ...turnStyle(editing.item),
-                }
-          }
-        />
+        <Suspense fallback={null}>
+          <RichTextEditor
+            key={editing.item.id}
+            blocks={itemBlocks(editing.item)}
+            handle={editorApi}
+            className={editing.item.kind}
+            label={editing.item.kind === 'text' ? 'Text box' : 'Sticky note'}
+            onDone={commitEdit}
+            style={
+              editing.item.kind === 'text'
+                ? {
+                    left: editing.item.x * scale,
+                    top: editing.item.y * scale,
+                    width: editing.item.w * scale,
+                    minHeight: editing.item.h * scale,
+                    padding: TEXT_PAD * scale,
+                    font: `${editing.item.size * scale}px/${LINE_HEIGHT} ${fontFamily(editing.item.font)}`,
+                    color: editing.item.color,
+                    ...turnStyle(editing.item),
+                  }
+                : {
+                    left: editing.item.x * scale,
+                    top: editing.item.y * scale,
+                    width: editing.item.w * scale,
+                    height: editing.item.h * scale,
+                    padding: STICKY_PAD * scale,
+                    font: `${STICKY_TEXT_SIZE * scale}px/${LINE_HEIGHT} ${fontFamily('sans')}`,
+                    background: editing.item.color,
+                    ...turnStyle(editing.item),
+                  }
+            }
+          />
+        </Suspense>
       )}
     </div>
   );

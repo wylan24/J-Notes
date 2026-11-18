@@ -105,9 +105,29 @@ export interface CropRect {
   h: number;
 }
 
+/** A stretch of text in one style. A newline in `text` is a line break within its paragraph. */
+export interface RichRun {
+  text: string;
+  b?: true;
+  i?: true;
+  /** Highlight colour behind the text. */
+  hl?: string;
+}
+
+/** A paragraph of formatted text: its runs, whether it is a list item, and how far it is indented. */
+export interface RichBlock {
+  runs: RichRun[];
+  list?: 'bullet' | 'ordered';
+  /** Indent level, 0 (absent) for none. For a list item, how deeply it is nested. */
+  indent?: number;
+}
+
 export interface TextItem extends ItemBase {
   kind: 'text';
+  /** The text without formatting (paragraphs joined by newlines); what search and copying read. */
   text: string;
+  /** The text with its formatting. Absent when it has none, as on notes from before formatting. */
+  rich?: RichBlock[];
   font: string;
   size: number;
   color: string;
@@ -126,6 +146,8 @@ export interface ImageItem extends ItemBase {
 export interface StickyItem extends ItemBase {
   kind: 'sticky';
   text: string;
+  /** The text with its formatting; absent when it has none. */
+  rich?: RichBlock[];
   color: string;
   collapsed: boolean;
 }

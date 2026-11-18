@@ -11,6 +11,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@tiptap/core": "^3.34.0",
+    "@tiptap/extension-highlight": "^3.34.0",
+    "@tiptap/pm": "^3.34.0",
+    "@tiptap/starter-kit": "^3.34.0",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^4.10.38",
     "perfect-freehand": "^1.2.2",

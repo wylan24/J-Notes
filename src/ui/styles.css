@@ -694,3 +694,17 @@ button:disabled { cursor: default; opacity: 0.35; }
 .quick-dot:hover { background: var(--accent); }
 .rotate-handle.corner { left: auto; right: -30px; top: -30px; margin-left: 0; }
 .rotate-handle.corner::after { display: none; }
+/* Formatted text while editing: laid out to match how the page draws it (see core/richText). */
+.item-editor.rich { box-sizing: border-box; cursor: text; }
+.item-editor.rich .ProseMirror { outline: none; min-height: 1.3em; }
+.item-editor.rich p { margin: 0; }
+.item-editor.rich ul, .item-editor.rich ol { margin: 0; padding-left: 1.5em; }
+.item-editor.rich li > p { margin: 0; }
+.item-editor.rich mark { color: inherit; padding: 0; border-radius: 0; }
+.format-bar {
+  position: absolute; z-index: 6; display: flex; gap: 2px; padding: 4px; white-space: nowrap;
+  background: #1f1f22; border-radius: 10px; box-shadow: var(--shadow);
+}
+.format-bar button { border: 0; background: none; color: #fff; min-width: 32px; padding: 6px 8px; border-radius: 7px; font-size: 14px; }
+.format-bar button:hover { background: rgba(255, 255, 255, 0.12); }
+.format-bar button.active { background: rgba(255, 255, 255, 0.22); }

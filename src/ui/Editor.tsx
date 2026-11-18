@@ -1160,7 +1160,9 @@ function EditorInner({
   toggleZoomRef.current = toggleZoomWindow;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Typing (including in the formatted-text editor) keeps its keys, and its own undo.
       if ((e.target instanceof HTMLInputElement && e.target.type !== 'range') || e.target instanceof HTMLTextAreaElement) return;
+      if (e.target instanceof HTMLElement && e.target.isContentEditable) return;
       const mod = e.metaKey || e.ctrlKey;
       // Read-only: only viewing shortcuts (zoom, search) work.
       if (readOnlyRef.current && !(mod && ['=', '+', '-', '0', 'f'].includes(e.key.toLowerCase()))) return;
