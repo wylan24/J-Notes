@@ -31,7 +31,7 @@ import { CropOverlay } from './CropOverlay';
 import { SelectionMenu, type MenuAction } from './SelectionMenu';
 import { ShapeStyleRow } from './ShapeStyle';
 import { bendHandle, bendTo, itemFromShape, lineEnds, lineGeometry, touchesCircle } from '../core/shapeItems';
-import { anchorPoint, attachDrawnLine, attachmentAt, followConnectors } from '../core/connectors';
+import { anchorPoint, attachDrawnLine, attachmentAt, followConnectors, quickConnectOps, SIDE_AT, SIDES, type Side } from '../core/connectors';
 import { animatedResolver, ensureGif, gifFrameIndex, isAnimated, isStatic } from '../render/gifs';
 import { screenshotRect, type Rect } from '../core/screenshot';
 import { cropPatch, flipPatch } from '../core/imageEdit';
@@ -1257,6 +1257,16 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   };
   const shownLine = soleItem?.kind === 'line' ? (lineEdit?.preview ?? soleItem) : null;
 
+  // --- Quick diagramming: a dot on each side of a lone selected shape adds a connected copy there ---
+  const quickDots = soleItem?.kind === 'shape' && !drag && !xform && !resize ? soleItem : null;
+  const quickConnect = (side: Side) => {
+    if (!soleItem) return;
+    const made = quickConnectOps(page, soleItem.id, side, size);
+    if (!made) return;
+    store.dispatch(made.ops);
+    setSelection({ pageId: page.id, strokeIds: [], itemIds: [made.copyId] });
+  };
+
   // --- Zoom window target box: drag to move it ----------------------------------------
   const targetDrag = useRef<{ pointerId: number; sx: number; sy: number; x: number; y: number } | null>(null);
   const onTargetDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -1375,7 +1385,8 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
               ))}
             {!drag && selected && (soleItem ? canRotate(soleItem) : true) && (!xform || xform.kind === 'rotate') && (
               <div
-                className="rotate-handle"
+                // A lone shape's rotate handle sits at its corner, clear of the quick-diagram dot above it.
+                className={`rotate-handle ${quickDots ? 'corner' : ''}`}
                 aria-label="Rotate selection"
                 onPointerDown={onXformDown('rotate')}
                 onPointerMove={onXformMove}
@@ -1386,6 +1397,25 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
               </div>
             )}
           </div>
+          {quickDots &&
+            SIDES.map((side) => {
+              const a = anchorPoint(quickDots, SIDE_AT[side]);
+              const c = { x: quickDots.x + quickDots.w / 2, y: quickDots.y + quickDots.h / 2 };
+              const d = Math.hypot(a.x - c.x, a.y - c.y) || 1;
+              const out = 22; // screen px beyond the edge
+              return (
+                <button
+                  key={side}
+                  className="quick-dot"
+                  data-no-gesture
+                  aria-label={`Add a connected shape ${{ n: 'above', e: 'to the right', s: 'below', w: 'to the left' }[side]}`}
+                  title="Add a connected shape"
+                  style={{ left: a.x * scale + ((a.x - c.x) / d) * out, top: a.y * scale + ((a.y - c.y) / d) * out }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => quickConnect(side)}
+                />
+              );
+            })}
           {shownLine && !drag && !xform && (
             <>
               {[...lineEnds(shownLine).map((p, i) => ({ p, handle: i as 0 | 1 })), { p: bendHandle(shownLine), handle: 'bend' as const }].map(({ p, handle }) => (
@@ -1411,6 +1441,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
               // Clear of the rotate handle when there is one.
               clearance={selected && (soleItem ? canRotate(soleItem) : true) ? 48 : 12}
               pageW={cssW}
+              gapBelow={quickDots ? 40 : 16}
               more={moreActions}
               styleRow={styleRow}
             >

@@ -13,6 +13,8 @@ interface Props {
   clearance: number;
   /** Page width in CSS px; the menu stays within it. */
   pageW: number;
+  /** Space to leave below the selection when the menu goes under it. */
+  gapBelow?: number;
   /** Buttons always shown in the bar. */
   children: ReactNode;
   /** Less common actions, behind a More button. */
@@ -28,7 +30,7 @@ const MARGIN = 8;
  * the window, above the selection when there is room and below it otherwise; rare actions sit
  * behind More so the bar stays short.
  */
-export function SelectionMenu({ anchor, clearance, pageW, children, more = [], styleRow }: Props) {
+export function SelectionMenu({ anchor, clearance, pageW, gapBelow = 16, children, more = [], styleRow }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ left: number; top: number; below: boolean } | null>(null);
@@ -46,7 +48,7 @@ export function SelectionMenu({ anchor, clearance, pageW, children, more = [], s
     const left = Math.max(lo, Math.min(anchor.left, hi - w));
     const above = anchor.top - clearance - h;
     const below = above < 4;
-    const top = below ? anchor.bottom + 16 : above;
+    const top = below ? anchor.bottom + gapBelow : above;
     setPos((p) => (p && p.left === left && p.top === top ? p : { left, top, below }));
   };
 

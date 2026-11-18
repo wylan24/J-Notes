@@ -208,3 +208,50 @@ export function reidItems<T extends PageItem>(items: readonly T[]): T[] {
     return { ...rest, ...(from ? { from } : {}), ...(to ? { to } : {}) } as unknown as T;
   });
 }
+
+// --- Quick diagramming ------------------------------------------------------------------------
+
+export type Side = 'n' | 'e' | 's' | 'w';
+export const SIDES: readonly Side[] = ['n', 'e', 's', 'w'];
+
+/** The middle of each side, as a point on the item's box. */
+export const SIDE_AT: Record<Side, Attachment['at']> = { n: { x: 0.5, y: 0 }, e: { x: 1, y: 0.5 }, s: { x: 0.5, y: 1 }, w: { x: 0, y: 0.5 } };
+const OPPOSITE: Record<Side, Side> = { n: 's', s: 'n', e: 'w', w: 'e' };
+
+/** Space between a shape and the copy quick diagramming adds beside it, in page units. */
+export const QUICK_GAP = 60;
+
+/**
+ * Add a copy of a shape beside it on `side` (turned with the shape), joined to it by an arrow from
+ * the middle of that side to the middle of the copy's facing side. The copy is kept on the page.
+ * Returns the ops (one undo step) and the copy's id, or null if `shapeId` isn't a shape.
+ */
+export function quickConnectOps(page: Page, shapeId: string, side: Side, size: { w: number; h: number }): { ops: DocOp[]; copyId: string } | null {
+  const src = page.items.find((it) => it.id === shapeId);
+  if (!src || src.kind !== 'shape') return null;
+  const theta = src.rotation ?? 0;
+  const c = Math.cos(theta), s = Math.sin(theta);
+  // Along the shape's own axes, then turned with it.
+  const along = side === 'e' || side === 'w' ? src.w + QUICK_GAP : src.h + QUICK_GAP;
+  const sign = side === 'e' || side === 's' ? 1 : -1;
+  const [ux, uy] = side === 'e' || side === 'w' ? [c, s] : [-s, c];
+  const clamp = (v: number, hi: number) => Math.max(0, Math.min(v, Math.max(0, hi)));
+  // Keep the copy's box on the page when there is room for it.
+  const x = clamp(src.x + sign * along * ux, size.w - src.w);
+  const y = clamp(src.y + sign * along * uy, size.h - src.h);
+  const copy: PageItem = { ...src, id: newId(), x, y };
+  delete (copy as { locked?: true }).locked;
+  const fromAt = SIDE_AT[side], toAt = SIDE_AT[OPPOSITE[side]];
+  const a = anchorPoint(src, fromAt), b = anchorPoint(copy, toAt);
+  const line: LineItem = {
+    id: newId(),
+    kind: 'line',
+    ...lineGeometry(a, b),
+    color: src.color,
+    width: src.width,
+    arrow: 'end',
+    from: { id: src.id, at: fromAt },
+    to: { id: copy.id, at: toAt },
+  };
+  return { ops: [{ type: 'items.added', pageId: page.id, items: [copy, line] }], copyId: copy.id };
+}

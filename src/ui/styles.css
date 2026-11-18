@@ -685,3 +685,12 @@ button:disabled { cursor: default; opacity: 0.35; }
 .line-handle.attached { background: var(--accent); }
 .line-handle.bend { width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 3px; transform: rotate(45deg); }
 .line-handle::before { content: ''; position: absolute; inset: -10px; } /* a bigger target for fingers */
+/* Quick diagramming: a dot beyond each side of a lone selected shape. */
+.quick-dot {
+  position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; padding: 0; border-radius: 50%; z-index: 4;
+  background: #fff; border: 2px solid var(--accent); cursor: pointer; touch-action: none;
+}
+.quick-dot::before { content: ''; position: absolute; inset: -10px; border-radius: 50%; }
+.quick-dot:hover { background: var(--accent); }
+.rotate-handle.corner { left: auto; right: -30px; top: -30px; margin-left: 0; }
+.rotate-handle.corner::after { display: none; }
