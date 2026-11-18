@@ -568,3 +568,7 @@ button:disabled { cursor: default; opacity: 0.35; }
 }
 .back-pill svg { width: 16px; height: 16px; }
 .link-select { border: 1px solid var(--border); background: var(--surface-2); color: var(--text); border-radius: 10px; padding: 10px 12px; font: inherit; }
+
+/* ---------- Read-only ---------- */
+.read-only-chip { font-size: 13px; color: var(--muted); padding: 6px 12px; border-radius: 999px; background: var(--surface-2); white-space: nowrap; }
+.page-layer.live.read-only { cursor: default; }

@@ -168,6 +168,17 @@ function EditorInner({
   useSyncExternalStore(store.subscribe, store.getVersion); // re-render for undo/redo state
   const [meta, setMeta] = useState(initialMeta);
   const [zoom, setZoom] = useState(() => readPref('jnotes.zoom', 1));
+  // Read-only: remembered per notebook in this browser.
+  const [readOnly, setReadOnlyState] = useState(() => readPref<string[]>('jnotes.readOnly', []).includes(initialMeta.id));
+  const setReadOnly = (on: boolean) => {
+    setReadOnlyState(on);
+    const ids = new Set(readPref<string[]>('jnotes.readOnly', []));
+    if (on) ids.add(initialMeta.id);
+    else ids.delete(initialMeta.id);
+    writePref('jnotes.readOnly', [...ids]);
+  };
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
   // Pages stacked top to bottom, or side by side; remembered in this browser.
   const [scrollDir, setScrollDir] = useState<ScrollDirection>(() => (readPref<string>('jnotes.scroll', 'vertical') === 'horizontal' ? 'horizontal' : 'vertical'));
   const [toolKind, setToolKind] = useState<ToolKind>('pen');
@@ -336,7 +347,8 @@ function EditorInner({
     if (e.pointerType !== 'touch' || isUiTarget(e.target)) return;
     const g = gesture.current;
     g.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (penOnly || g.touches.size >= 2) {
+    // One finger pans when it can't draw: in Stylus only mode, and in read-only mode.
+    if (penOnly || readOnly || g.touches.size >= 2) {
       g.active = true;
       resetPinch();
     }
@@ -560,6 +572,7 @@ function EditorInner({
 
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
+      if (readOnlyRef.current) return;
       const t = e.target;
       if (t instanceof HTMLTextAreaElement || t instanceof HTMLInputElement) return;
       const files = [...(e.clipboardData?.files ?? [])].filter(isImageFile);
@@ -727,6 +740,14 @@ function EditorInner({
     const left = scrollDir === 'horizontal' || box.left + x * zoom > el.scrollLeft + el.clientWidth - 40 ? box.left + x * zoom - el.clientWidth / 3 : el.scrollLeft;
     el.scrollTo({ top: Math.max(0, top), left: Math.max(0, left), behavior: 'auto' });
   };
+
+  // Turning read-only on puts down whatever was in hand.
+  useEffect(() => {
+    if (!readOnly) return;
+    setSelection(null);
+    setZoomTarget(null);
+    setRuler(null);
+  }, [readOnly]);
 
   // --- Outline -----------------------------------------------------------------------------
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('pages');
@@ -918,6 +939,8 @@ function EditorInner({
     const onKey = (e: KeyboardEvent) => {
       if ((e.target instanceof HTMLInputElement && e.target.type !== 'range') || e.target instanceof HTMLTextAreaElement) return;
       const mod = e.metaKey || e.ctrlKey;
+      // Read-only: only viewing shortcuts (zoom, search) work.
+      if (readOnlyRef.current && !(mod && ['=', '+', '-', '0', 'f'].includes(e.key.toLowerCase()))) return;
       if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault();
         setSelection(null);
@@ -973,26 +996,32 @@ function EditorInner({
           <button className="icon-btn" onClick={() => void exit()} aria-label="Back to library" title="Library">
             <Icon name="back" />
           </button>
-          <input className="title-input" defaultValue={meta.title} onBlur={(e) => rename(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()} aria-label="Notebook title" />
+          <input className="title-input" readOnly={readOnly} defaultValue={meta.title} onBlur={(e) => rename(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()} aria-label="Notebook title" />
           <span className={`save-status ${status}`} title="Saved locally on this device">
             {status === 'saved' ? 'Saved' : status === 'error' ? 'Save failed' : 'Saving…'}
           </span>
         </div>
 
         <div className="tb-group tools" role="toolbar" aria-label="Tools">
-          <button className="icon-btn" disabled={!store.canUndo} onClick={() => store.undo()} aria-label="Undo" title="Undo (⌘Z)">
-            <Icon name="undo" />
-          </button>
-          <button className="icon-btn" disabled={!store.canRedo} onClick={() => store.redo()} aria-label="Redo" title="Redo (⇧⌘Z)">
-            <Icon name="redo" />
-          </button>
-          <span className="divider" />
-          {shownItems.map(renderToolbarItem)}
-          {overflowItems.length > 0 && <OverflowMenu items={overflowItems} render={renderToolbarItem} active={overflowItems.some((i) => i === toolKind)} />}
-          <span className="divider" />
-          <button className="icon-btn" aria-label="Customise toolbar" title="Customise toolbar" onClick={() => setCustomising(true)}>
-            <Icon name="sliders" />
-          </button>
+          {readOnly ? (
+            <span className="read-only-chip">Read only · tap links to follow them</span>
+          ) : (
+            <>
+              <button className="icon-btn" disabled={!store.canUndo} onClick={() => store.undo()} aria-label="Undo" title="Undo (⌘Z)">
+                <Icon name="undo" />
+              </button>
+              <button className="icon-btn" disabled={!store.canRedo} onClick={() => store.redo()} aria-label="Redo" title="Redo (⇧⌘Z)">
+                <Icon name="redo" />
+              </button>
+              <span className="divider" />
+              {shownItems.map(renderToolbarItem)}
+              {overflowItems.length > 0 && <OverflowMenu items={overflowItems} render={renderToolbarItem} active={overflowItems.some((i) => i === toolKind)} />}
+              <span className="divider" />
+              <button className="icon-btn" aria-label="Customise toolbar" title="Customise toolbar" onClick={() => setCustomising(true)}>
+                <Icon name="sliders" />
+              </button>
+            </>
+          )}
           <input
             ref={pagesInput}
             type="file"
@@ -1073,21 +1102,34 @@ function EditorInner({
           >
             <Icon name="bookmark" />
           </button>
-          <button className="icon-btn" onClick={addPage} aria-label="Add page after current" title="Add page">
-            <Icon name="addPage" />
+          <button
+            className={`icon-btn ${readOnly ? 'active' : ''}`}
+            onClick={() => setReadOnly(!readOnly)}
+            aria-pressed={readOnly}
+            aria-label="Read only"
+            title={readOnly ? 'Read only: on (tap to edit again)' : 'Read only: tools off, taps follow links'}
+          >
+            <Icon name="readOnly" />
           </button>
-          <button className="icon-btn" onClick={deletePage} disabled={doc.pages.length <= 1} aria-label="Delete current page" title="Delete page">
-            <Icon name="trash" />
-          </button>
-          <details className="menu">
-            <summary className="icon-btn" aria-label="Page actions" title="Page actions">
-              <Icon name="pages" />
-            </summary>
-            {/* Close the menu once an action is chosen. */}
-            <div className="menu-pop" onClick={(e) => (e.target as HTMLElement).closest('button') && e.currentTarget.closest('details')?.removeAttribute('open')}>
-              <PageMenuItems actions={{ ...pageActions(currentPage), remove: undefined }} />
-            </div>
-          </details>
+          {!readOnly && (
+            <>
+              <button className="icon-btn" onClick={addPage} aria-label="Add page after current" title="Add page">
+                <Icon name="addPage" />
+              </button>
+              <button className="icon-btn" onClick={deletePage} disabled={doc.pages.length <= 1} aria-label="Delete current page" title="Delete page">
+                <Icon name="trash" />
+              </button>
+              <details className="menu">
+                <summary className="icon-btn" aria-label="Page actions" title="Page actions">
+                  <Icon name="pages" />
+                </summary>
+                {/* Close the menu once an action is chosen. */}
+                <div className="menu-pop" onClick={(e) => (e.target as HTMLElement).closest('button') && e.currentTarget.closest('details')?.removeAttribute('open')}>
+                  <PageMenuItems actions={{ ...pageActions(currentPage), remove: undefined }} />
+                </div>
+              </details>
+            </>
+          )}
           <details className="menu">
             <summary className="icon-btn" aria-label="Export">
               <Icon name="share" />
@@ -1101,7 +1143,7 @@ function EditorInner({
         </div>
       </header>
 
-      {(inkTool || toolKind === 'eraser' || toolKind === 'text' || toolKind === 'sticky') && (
+      {!readOnly && (inkTool || toolKind === 'eraser' || toolKind === 'text' || toolKind === 'sticky') && (
         <div className="tool-options" data-no-gesture role="toolbar" aria-label="Tool options">
           {inkTool === 'pen' && (
             <>
@@ -1255,10 +1297,12 @@ function EditorInner({
           onToggleBookmark={toggleBookmark}
           tab={sidebarTab}
           onTab={setSidebarTab}
+          readOnly={readOnly}
           outline={
             <OutlinePanel
               doc={doc}
               currentPage={currentPage}
+              readOnly={readOnly}
               renaming={outlineRenaming}
               onRenamed={() => setOutlineRenaming(null)}
               onJump={jumpToEntry}
@@ -1281,6 +1325,7 @@ function EditorInner({
           if (e.dataTransfer.types.includes('Files')) e.preventDefault();
         }}
         onDrop={(e) => {
+          if (readOnly) return;
           const files = [...e.dataTransfer.files].filter(isImageFile);
           if (!files.length) return;
           e.preventDefault();
@@ -1305,6 +1350,7 @@ function EditorInner({
               onSaveElement={(sel) => void saveAsElement(sel)}
               onAddToOutline={addSelectionToOutline}
               onFollowLink={followLink}
+              readOnly={readOnly}
               onEditLink={(sel, link) => setLinkDialog({ sel, link })}
               playback={playback}
               onSeekInk={audioOpen && recState === 'idle' && recordings.length ? seekInk : undefined}

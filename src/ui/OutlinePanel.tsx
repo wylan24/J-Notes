@@ -16,6 +16,7 @@ export function OutlinePanel({
   onJump,
   onAddPage,
   dispatch,
+  readOnly = false,
 }: {
   doc: NotebookDoc;
   currentPage: number;
@@ -26,6 +27,8 @@ export function OutlinePanel({
   /** Add the current page to the outline. */
   onAddPage: () => void;
   dispatch: (op: DocOp | null) => void;
+  /** Entries can be followed but not added or changed. */
+  readOnly?: boolean;
 }) {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
@@ -62,11 +65,13 @@ export function OutlinePanel({
 
   return (
     <div className="sidebar-scroll outline" role="tabpanel" aria-label="Outline">
-      <button className="outline-add" onClick={onAddPage}>
-        <Icon name="plus" /> Add page {currentPage + 1}
-      </button>
+      {!readOnly && (
+        <button className="outline-add" onClick={onAddPage}>
+          <Icon name="plus" /> Add page {currentPage + 1}
+        </button>
+      )}
       {rows.length === 0 ? (
-        <p className="sidebar-empty">Add pages here, or select something with the lasso and choose “Add to outline”.</p>
+        <p className="sidebar-empty">{readOnly ? 'This notebook has no outline.' : 'Add pages here, or select something with the lasso and choose “Add to outline”.'}</p>
       ) : (
         <ul role="tree" aria-label="Outline">
           {rows.map(({ entry, index, pageIndex }) => (
@@ -93,16 +98,18 @@ export function OutlinePanel({
                   <small>{pageIndex + 1}</small>
                 </button>
               )}
-              <button
-                className="outline-more"
-                aria-label={`${entry.title} options`}
-                onClick={(e) => {
-                  const r = e.currentTarget.getBoundingClientRect();
-                  setMenu(menu?.id === entry.id ? null : { id: entry.id, x: r.left, y: r.bottom });
-                }}
-              >
-                <Icon name="more" />
-              </button>
+              {!readOnly && (
+                <button
+                  className="outline-more"
+                  aria-label={`${entry.title} options`}
+                  onClick={(e) => {
+                    const r = e.currentTarget.getBoundingClientRect();
+                    setMenu(menu?.id === entry.id ? null : { id: entry.id, x: r.left, y: r.bottom });
+                  }}
+                >
+                  <Icon name="more" />
+                </button>
+              )}
             </li>
           ))}
         </ul>

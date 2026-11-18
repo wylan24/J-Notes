@@ -86,6 +86,7 @@ export function PageSidebar({
   tab,
   onTab,
   outline,
+  readOnly = false,
 }: {
   pages: readonly Page[];
   docId: string;
@@ -100,6 +101,8 @@ export function PageSidebar({
   onTab: (tab: SidebarTab) => void;
   /** The Outline tab's content. */
   outline: ReactNode;
+  /** No reordering or page menus: thumbnails only jump. */
+  readOnly?: boolean;
 }) {
   const setTab = onTab;
   const marked = useMemo(() => new Set(bookmarks), [bookmarks]);
@@ -215,7 +218,7 @@ export function PageSidebar({
     const index = Number(thumb.dataset.index);
     clearPress();
     const p: Press = { pointerId: e.pointerId, index, x: e.clientX, y: e.clientY, timer: null, mouse: e.pointerType === 'mouse' };
-    if (!p.mouse) p.timer = setTimeout(() => press.current === p && startDrag(p, p.y), LONG_PRESS_MS);
+    if (!p.mouse && !readOnly) p.timer = setTimeout(() => press.current === p && startDrag(p, p.y), LONG_PRESS_MS);
     press.current = p;
   };
 
@@ -229,7 +232,7 @@ export function PageSidebar({
     const moved = Math.hypot(e.clientX - p.x, e.clientY - p.y) > SLOP;
     if (!moved) return;
     // Mouse: dragging starts on movement. Touch and pen: moving before the long press means scrolling.
-    if (p.mouse) {
+    if (p.mouse && !readOnly) {
       clearPress();
       startDrag(p, e.clientY);
     } else clearPress();
@@ -321,17 +324,19 @@ export function PageSidebar({
                 {marked.has(i) && <span className="thumb-ribbon" aria-label="Bookmarked" />}
                 <div className="thumb-label">
                   <span>{i + 1}</span>
-                  <button
-                    className="thumb-more"
-                    aria-label={`Page ${i + 1} actions`}
-                    title="Page actions"
-                    onClick={(e) => {
-                      const r = e.currentTarget.getBoundingClientRect();
-                      setMenu(menu?.index === i ? null : { index: i, x: r.left, y: r.bottom });
-                    }}
-                  >
-                    <Icon name="more" />
-                  </button>
+                  {!readOnly && (
+                    <button
+                      className="thumb-more"
+                      aria-label={`Page ${i + 1} actions`}
+                      title="Page actions"
+                      onClick={(e) => {
+                        const r = e.currentTarget.getBoundingClientRect();
+                        setMenu(menu?.index === i ? null : { index: i, x: r.left, y: r.bottom });
+                      }}
+                    >
+                      <Icon name="more" />
+                    </button>
+                  )}
                 </div>
               </div>
             );

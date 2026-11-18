@@ -87,6 +87,8 @@ interface Props {
   onFollowLink?: (target: LinkTarget) => void;
   /** Make the selection a link, or edit the link that is selected. */
   onEditLink?: (sel: Selection, link: LinkItem | null) => void;
+  /** Read-only: no tool does anything; a tap follows a link (or seeks recorded audio) and nothing else. */
+  readOnly?: boolean;
   /** An audio recording playing at time `t` (ms): its ink that hasn't been reached yet is drawn faded. */
   playback?: { rec: string; t: number } | null;
   /** When set, tapping ink written during a recording plays the audio from there instead of using the tool. */
@@ -222,7 +224,7 @@ function paintLaser(ctx: CanvasRenderingContext2D, trail: LaserPoint[], now: num
   ctx.restore();
 }
 
-export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, onAddToOutline, onFollowLink, onEditLink, playback, onSeekInk, highlights }: Props) {
+export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, onAddToOutline, onFollowLink, onEditLink, readOnly, playback, onSeekInk, highlights }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const baseRef = useRef<HTMLCanvasElement>(null);
   const liveRef = useRef<HTMLCanvasElement>(null);
@@ -237,6 +239,8 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   const replaced = useRef<Map<string, Stroke[]> | null>(null);
   const laserTrail = useRef<LaserPoint[]>([]);
   const active = useRef<Active | null>(null);
+  /** Read-only: a press waiting to see whether it is a tap. */
+  const readTap = useRef<{ pointerId: number; pt: Vec; x: number; y: number; t: number; moved: boolean } | null>(null);
   /** A press that began on a link; it follows the link if it ends as a tap. */
   const linkTap = useRef<{ pointerId: number; link: LinkItem; x: number; y: number; t: number; moved: boolean } | null>(null);
   const clearLiveOnNextBase = useRef(false);
@@ -513,6 +517,14 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (readOnly) {
+      // Only remember the press: it follows a link if it ends as a tap. Fingers count here even in
+      // Stylus only mode (there's nothing to draw); a finger that pans moves, so it won't count as a tap.
+      if (e.pointerType === 'touch' && gesture.current.touches.size > 1) return;
+      const pt = toPage(e, e.pointerType);
+      readTap.current = { pointerId: e.pointerId, pt, x: e.clientX, y: e.clientY, t: performance.now(), moved: false };
+      return;
+    }
     if (ignoreTouch(e) || active.current) return;
     e.preventDefault();
     if (selection) setSelection(null);
@@ -636,6 +648,8 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const rt = readTap.current;
+    if (rt && rt.pointerId === e.pointerId && Math.hypot(e.clientX - rt.x, e.clientY - rt.y) > TAP_SLOP_PX) rt.moved = true;
     const tap = linkTap.current;
     if (tap && tap.pointerId === e.pointerId && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > TAP_SLOP_PX) tap.moved = true;
     const a = active.current;
@@ -742,7 +756,23 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     clearLive();
   };
 
-  const cancel = () => finish(false);
+  const cancel = () => {
+    readTap.current = null;
+    finish(false);
+  };
+
+  /** Read-only: a quick, still tap follows the link under it, or jumps recorded audio to the ink under it. */
+  const readOnlyTap = (pointerId: number) => {
+    const tap = readTap.current;
+    readTap.current = null;
+    if (!tap || tap.pointerId !== pointerId || tap.moved || performance.now() - tap.t > TAP_MS) return;
+    const link = linkAt(pageRef.current, tap.pt, 4 / scale);
+    if (link) return onFollowLink?.(link.target);
+    if (onSeekInk) {
+      const hit = strokeAtForSeek(pageRef.current.strokes, tap.pt, 8 / scale);
+      if (hit?.rec) onSeekInk(hit.rec, seekTimeFor(hit));
+    }
+  };
 
   // --- Selection (lasso result) -------------------------------------------------
   const selStrokes = selected ? selectedStrokes(page, selected) : [];
@@ -955,10 +985,10 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       <canvas ref={baseRef} className="page-layer" />
       <canvas
         ref={liveRef}
-        className={`page-layer live tool-${tool.kind}`}
+        className={`page-layer live ${readOnly ? 'read-only' : `tool-${tool.kind}`}`}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
-        onPointerUp={() => finish(true)}
+        onPointerUp={(e) => (readOnly ? readOnlyTap(e.pointerId) : finish(true))}
         onPointerCancel={cancel}
         onLostPointerCapture={(e) => active.current?.pointerId === e.pointerId && finish(true)}
       />
