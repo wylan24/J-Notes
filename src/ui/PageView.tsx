@@ -22,6 +22,7 @@ import { linkAt, TAP_MS, TAP_SLOP_PX } from '../core/links';
 import { pixelToHex } from '../core/color';
 import { newTape, tapeAt, tapeRect } from '../core/tape';
 import { isScribble, scribbledStrokes } from '../core/scribble';
+import { inkKind, type InkKind } from '../core/contentKinds';
 import { pointsLength, strokeHitsCircle, type Vec } from '../core/geometry';
 import { edgeNear, mapEdge, projectToEdge, type Edge } from '../core/ruler';
 import { newInkStroke, pressureOf, timeStamp } from './ink';
@@ -67,7 +68,8 @@ export interface ToolState {
   /** Eraser radius in screen px, independent of zoom. */
   eraserPx: number;
   eraseMode: EraseMode;
-  highlighterOnly: boolean;
+  /** Which ink the eraser erases. */
+  eraseKinds: readonly InkKind[];
   /** Style for new text boxes. */
   text: TextStyle;
   /** Colour for new sticky notes. */
@@ -587,13 +589,13 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       active.current = { kind: 'ink', pointerId: e.pointerId, stroke, predicted: [], snap, recognize, holdTimer: null, anchor: pt, ruler };
       if (!straight && !ruler) armHold();
     } else if (tool.kind === 'eraser') {
-      const highlighterOnly = tool.highlighterOnly;
+      const kinds = tool.eraseKinds;
       active.current = {
         kind: 'erase',
         pointerId: e.pointerId,
         r: tool.eraserPx / scale,
         mode: tool.eraseMode,
-        canErase: (s) => !highlighterOnly || s.tool === 'highlighter',
+        canErase: (s) => kinds.includes(inkKind(s)),
         hits: new Set(),
         pieces: new Map(),
         cursor: pt,

@@ -630,3 +630,10 @@ button:disabled { cursor: default; opacity: 0.35; }
 .sampling-banner .btn { color: inherit; }
 .page-layer.live.sampling { cursor: crosshair; }
 .tool-hint { font-size: 12px; color: var(--muted); padding: 0 6px; white-space: nowrap; }
+
+/* ---------- Selective eraser / delete items ---------- */
+.erase-kinds { display: inline-flex; align-items: center; gap: 4px; }
+.erase-kinds .chip svg { width: 15px; height: 15px; }
+.delete-items .btn svg { width: 15px; height: 15px; vertical-align: -3px; }
+.delete-items .menu-pop { top: 36px; left: 0; right: auto; }
+.menu-heading { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); padding: 6px 10px 2px; }

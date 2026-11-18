@@ -21,6 +21,8 @@ import { DEFAULT_STABILISE, normaliseStabilise } from '../core/stabilise';
 import { addPreset, applyPreset, makePreset, normalizePresets, removePreset, type ToolPreset } from '../core/presets';
 import { ToolPresets } from './ToolPresets';
 import { ColorPicker } from './ColorPicker';
+import { CONTENT_LABELS, INK_KINDS, normalizeEraseKinds, toggleEraseKind, deleteContentOps, type InkKind } from '../core/contentKinds';
+import { DeleteItemsMenu } from './DeleteItemsMenu';
 import { addSwatch, normalizeSwatches } from '../core/color';
 import { countTape, removeAllTapeOps, TAPE_COLORS, toggleRevealed } from '../core/tape';
 import { OutlinePanel } from './OutlinePanel';
@@ -98,7 +100,8 @@ interface InkSettings {
 interface EraserSettings {
   size: number;
   mode: EraseMode;
-  highlighterOnly: boolean;
+  /** Which ink the eraser erases. */
+  kinds: InkKind[];
 }
 
 const DEFAULT_INK: InkSettings = {
@@ -106,7 +109,7 @@ const DEFAULT_INK: InkSettings = {
   highlighter: { color: HIGHLIGHT_COLORS[0], width: WIDTHS.highlighter[1], straight: false, stabilise: DEFAULT_STABILISE },
   shapes: { color: PEN_COLORS[0], width: WIDTHS.shapes[1], dash: 'solid', stabilise: DEFAULT_STABILISE },
 };
-const DEFAULT_ERASER: EraserSettings = { size: ERASER_SIZES[1], mode: 'stroke', highlighterOnly: false };
+const DEFAULT_ERASER: EraserSettings = { size: ERASER_SIZES[1], mode: 'stroke', kinds: [...INK_KINDS] };
 
 function readPref<T>(key: string, fallback: T): T {
   try {
@@ -207,7 +210,12 @@ function EditorInner({
       shapes: { ...DEFAULT_INK.shapes, ...saved.shapes },
     };
   });
-  const [eraser, setEraser] = useState<EraserSettings>(() => ({ ...DEFAULT_ERASER, ...readPref<Partial<EraserSettings>>('jnotes.eraser', {}) }));
+  const [eraser, setEraser] = useState<EraserSettings>(() => {
+    // Saved settings may predate the kinds filter (they had "highlighter only").
+    const saved = readPref<Partial<EraserSettings> & { highlighterOnly?: boolean }>('jnotes.eraser', {});
+    const { highlighterOnly, ...rest } = saved;
+    return { ...DEFAULT_ERASER, ...rest, kinds: normalizeEraseKinds(saved.kinds, highlighterOnly) };
+  });
   const setPen = (patch: Partial<InkSettings['pen']>) => setInk((v) => ({ ...v, pen: { ...v.pen, ...patch } }));
   const setHighlighter = (patch: Partial<InkSettings['highlighter']>) => setInk((v) => ({ ...v, highlighter: { ...v.highlighter, ...patch } }));
   const setInkTool = (t: ColorTool, patch: { color?: string; width?: number }) => setInk((v) => ({ ...v, [t]: { ...v[t], ...patch } }));
@@ -441,7 +449,7 @@ function EditorInner({
     straight: ink.highlighter.straight,
     eraserPx: eraser.size,
     eraseMode: eraser.mode,
-    highlighterOnly: eraser.highlighterOnly,
+    eraseKinds: eraser.kinds,
     text: textStyle,
     stickyColor,
     tapeColor,
@@ -1462,14 +1470,23 @@ function EditorInner({
                   </button>
                 ))}
               </div>
-              <button
-                className={`chip ${eraser.highlighterOnly ? 'active' : ''}`}
-                aria-pressed={eraser.highlighterOnly}
-                onClick={() => setEraser({ ...eraser, highlighterOnly: !eraser.highlighterOnly })}
-                title="Only erase highlighter ink"
-              >
-                <Icon name="highlighter" /> Highlighter only
-              </button>
+              <span className="divider" />
+              <div className="erase-kinds" role="group" aria-label="Erase">
+                <span className="tool-hint">Erases</span>
+                {INK_KINDS.map((k) => (
+                  <button
+                    key={k}
+                    className={`chip ${eraser.kinds.includes(k) ? 'active' : ''}`}
+                    aria-pressed={eraser.kinds.includes(k)}
+                    onClick={() => setEraser({ ...eraser, kinds: toggleEraseKind(eraser.kinds, k) })}
+                    title={eraser.kinds.includes(k) && eraser.kinds.length === 1 ? 'The eraser has to erase something' : `${eraser.kinds.includes(k) ? 'Stop erasing' : 'Erase'} ${CONTENT_LABELS[k].toLowerCase()}`}
+                  >
+                    <Icon name={k === 'pen' ? 'pen' : k} /> {CONTENT_LABELS[k]}
+                  </button>
+                ))}
+              </div>
+              <span className="divider" />
+              <DeleteItemsMenu page={doc.pages[currentPage]} onDelete={(kind) => doc.pages[currentPage] && store.dispatch(deleteContentOps(doc.pages[currentPage], kind))} />
             </>
           )}
         </div>
