@@ -801,3 +801,8 @@ button:disabled { cursor: default; opacity: 0.35; }
 .shortcut dt { flex: 0 0 9.5em; }
 .shortcut dd { margin: 0; color: var(--text); }
 kbd { font: 12px ui-monospace, 'SF Mono', Menlo, monospace; background: var(--surface-2); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; padding: 1px 5px; white-space: pre; }
+.update-banner {
+  position: fixed; left: 50%; bottom: max(16px, env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 60;
+  display: flex; align-items: center; gap: 12px; padding: 8px 8px 8px 16px; border-radius: 12px;
+  background: var(--surface); color: var(--text); box-shadow: var(--shadow); border: 1px solid var(--border); white-space: nowrap;
+}

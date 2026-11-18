@@ -12,7 +12,7 @@ import type { NotebookMeta, TextDocNode } from '../core/model';
 import type { DocumentStore } from '../core/store';
 import { updateDocOp } from '../core/ops';
 import { newId } from '../core/ids';
-import { EMPTY_TEXT_DOC, forStorage, textDocBlobIds, textDocLines, withImageSources } from '../core/textDoc';
+import { EMPTY_TEXT_DOC, forStorage, textDocBlobIds, textDocLines, textDocPlain, withImageSources } from '../core/textDoc';
 import { HIGHLIGHT } from '../core/richText';
 import { getBlobs, putBlob, updateMeta } from '../storage/db';
 import { Persister, type SaveStatus } from '../storage/persister';
@@ -118,7 +118,8 @@ export default function TextDocument({ store, meta: initialMeta, snapshotSeq, on
           StoredImage.configure({ inline: false }),
         ],
         content: withImageSources(stored, (id) => urls.current.get(id)),
-        autofocus: stored === EMPTY_TEXT_DOC ? 'start' : false,
+        // A new, empty document is ready to type in.
+        autofocus: !textDocPlain(stored).trim() && !textDocBlobIds(stored).length ? 'start' : false,
         editorProps: {
           attributes: { class: 'text-doc-body', 'aria-label': 'Document', spellcheck: 'true' },
           // Pasted or dropped pictures are stored in the document, like photos in a notebook.

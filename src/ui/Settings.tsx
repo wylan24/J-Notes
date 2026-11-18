@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { forPlatform, SHORTCUT_GROUPS } from '../core/shortcuts';
 import { setTheme, useTheme, type Theme } from './theme';
+import { isIos, isStandalone, usePwa } from '../pwa/register';
 import type { EditorSettings, InkToolName } from './settingsStore';
 
 const THEMES: { id: Theme; label: string }[] = [
@@ -45,6 +46,36 @@ function Choice<T extends string>({ label, options, value, onChange }: { label: 
         ))}
       </div>
     </div>
+  );
+}
+
+/** Installing the app: a button where the browser offers it, otherwise how to do it. */
+function AppSection() {
+  const { install } = usePwa();
+  const standalone = isStandalone();
+  return (
+    <section>
+      <h3>App</h3>
+      {standalone ? (
+        <p className="setting-hint">Installed. J Notes opens on its own and works without a connection.</p>
+      ) : install ? (
+        <div className="setting-row">
+          <span>
+            <span className="setting-label">Install J Notes</span>
+            <span className="setting-hint">Open it from your home screen or dock, and use it offline.</span>
+          </span>
+          <button type="button" className="btn sm primary" onClick={() => void install()}>
+            Install
+          </button>
+        </div>
+      ) : (
+        <p className="setting-hint">
+          {isIos()
+            ? 'To install J Notes, tap Share in Safari, then Add to Home Screen. It then works offline.'
+            : "To install J Notes, use your browser's Install app option. Once loaded, it works offline either way."}
+        </p>
+      )}
+    </section>
   );
 }
 
@@ -127,6 +158,7 @@ export function SettingsDialog({ values, onChange, onClose, board }: Props) {
             />
           )}
         </section>
+        <AppSection />
         <section>
           <h3>Storage</h3>
           <p className="setting-hint">Everything is kept on this device, in this browser.</p>

@@ -18,6 +18,7 @@ import { Icon } from './icons';
 import { whiteboardPage } from '../core/whiteboard';
 import { EMPTY_TEXT_DOC } from '../core/textDoc';
 import { SettingsDialog } from './Settings';
+import { usePwa } from '../pwa/register';
 import { storedSettings, storeSettings, type EditorSettings } from './settingsStore';
 
 const KIND_LABELS: Record<KindFilter, string> = { all: 'Everything', notebook: 'Notebooks', whiteboard: 'Whiteboards', text: 'Documents' };
@@ -92,6 +93,7 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
     });
   const [creating, setCreating] = useState(false);
   const [settings, setSettings] = useState<EditorSettings | null>(null);
+  const { install } = usePwa();
   const [query, setQuery] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -270,6 +272,11 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
           <h1>Notebooks</h1>
         </div>
         <div className="lib-actions">
+          {install && (
+            <button className="btn ghost" onClick={() => void install()} title="Install J Notes as an app that works offline">
+              Install
+            </button>
+          )}
           <button className="icon-btn" onClick={() => setSettings(storedSettings())} aria-label="Settings" title="Settings">
             <Icon name="settings" />
           </button>

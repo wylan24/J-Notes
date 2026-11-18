@@ -4,6 +4,21 @@ import { Editor } from './ui/Editor';
 import { TimerWatcher } from './ui/Timer';
 import { Presentation } from './ui/Presentation';
 import { openTab } from './ui/tabsStore';
+import { usePwa } from './pwa/register';
+
+/** Shown when a new version has been downloaded: it takes over only when the person chooses. */
+function UpdateBanner() {
+  const { update } = usePwa();
+  if (!update) return null;
+  return (
+    <div className="update-banner" role="status">
+      <span>A new version of J Notes is ready.</span>
+      <button className="btn sm primary" onClick={update}>
+        Reload
+      </button>
+    </div>
+  );
+}
 
 // Hash routing: #/ = library, #/n/<id> = notebook, #/present/<id> = presentation window.
 // Keeps deep links working on any static host without server rewrites.
@@ -37,6 +52,7 @@ function MainApp() {
     <>
       {docId ? <Editor key={docId} id={docId} onExit={() => (location.hash = '#/')} /> : <Library onOpen={(id) => (location.hash = `#/n/${id}`)} />}
       <TimerWatcher />
+      <UpdateBanner />
     </>
   );
 }
