@@ -637,3 +637,8 @@ button:disabled { cursor: default; opacity: 0.35; }
 .delete-items .btn svg { width: 15px; height: 15px; vertical-align: -3px; }
 .delete-items .menu-pop { top: 36px; left: 0; right: auto; }
 .menu-heading { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); padding: 6px 10px 2px; }
+
+/* Snapping guides while a selection is dragged. */
+.snap-guide { position: absolute; pointer-events: none; z-index: 3; background: #e0407b; }
+.snap-guide.x { width: 2px; margin-left: -1px; }
+.snap-guide.y { height: 2px; margin-top: -1px; }

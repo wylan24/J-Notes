@@ -23,6 +23,7 @@ import { pixelToHex } from '../core/color';
 import { newTape, tapeAt, tapeRect } from '../core/tape';
 import { isScribble, scribbledStrokes } from '../core/scribble';
 import { inkKind, type InkKind } from '../core/contentKinds';
+import { snapMove, snapTargets, type SnapGuide, type SnapTargets } from '../core/snap';
 import { arrangeSelectionOps, lockSelectionOps, unlockedContent, type Arrange } from '../core/arrange';
 import { lassoAllowsItem, lassoPolygon, selectWithLasso, type LassoKind, type LassoShape } from '../core/lasso';
 import { pointsLength, strokeHitsCircle, type Vec } from '../core/geometry';
@@ -75,6 +76,8 @@ export interface ToolState {
   lassoShape: LassoShape;
   /** What the lasso picks up. */
   lassoKinds: readonly LassoKind[];
+  /** Dragged selections snap to other objects, the page and its lines. */
+  snap: boolean;
   /** Style for new text boxes. */
   text: TextStyle;
   /** Colour for new sticky notes. */
@@ -241,6 +244,9 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   const clearLiveOnNextBase = useRef(false);
   const liveFrame = useRef(0);
   const [drag, setDragState] = useState<{ pointerId: number; sx: number; sy: number; dx: number; dy: number } | null>(null);
+  // Snapping while a selection is dragged: what it can line up with (found once per drag), and the guides showing.
+  const snapRef = useRef<SnapTargets | null>(null);
+  const [guides, setGuides] = useState<SnapGuide[]>([]);
   // Mirror for the rAF painter, which must never see a stale closure.
   const dragRef = useRef<{ m: Matrix; ids: string[] } | null>(null);
   // Resize (corner handles) or rotate (top handle) of a lasso selection in progress.
@@ -917,15 +923,25 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     hidden.current = new Set(selected?.strokeIds ?? []);
     renderBase();
     if (liveRef.current) liveRef.current.style.mixBlendMode = 'normal';
+    snapRef.current = tool.snap && selected ? snapTargets(page, selected) : null;
     setDrag({ pointerId: e.pointerId, sx: e.clientX, sy: e.clientY, dx: 0, dy: 0 });
   };
   const onSelMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!drag || e.pointerId !== drag.pointerId) return;
-    setDrag({ ...drag, dx: (e.clientX - drag.sx) / scale, dy: (e.clientY - drag.sy) / scale });
+    let dx = (e.clientX - drag.sx) / scale;
+    let dy = (e.clientY - drag.sy) / scale;
+    if (snapRef.current && selBounds) {
+      const snapped = snapMove(selBounds, dx, dy, snapRef.current, 6 / scale, size);
+      ({ dx, dy } = snapped);
+      setGuides(snapped.guides);
+    }
+    setDrag({ ...drag, dx, dy });
   };
   const onSelUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!drag || e.pointerId !== drag.pointerId) return;
     hidden.current = null;
+    snapRef.current = null;
+    setGuides([]);
     setDrag(null);
     const ops = selected && (Math.abs(drag.dx) > 0.5 || Math.abs(drag.dy) > 0.5) ? moveSelectionOps(page, selected, drag.dx, drag.dy) : [];
     if (ops.length) {
@@ -1052,6 +1068,18 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
         onPointerCancel={cancel}
         onLostPointerCapture={(e) => active.current?.pointerId === e.pointerId && finish(true)}
       />
+      {drag &&
+        guides.map((g) => (
+          <div
+            key={`${g.axis}${g.at}`}
+            className={`snap-guide ${g.axis}`}
+            style={
+              g.axis === 'x'
+                ? { left: g.at * scale, top: g.from * scale, height: (g.to - g.from) * scale }
+                : { top: g.at * scale, left: g.from * scale, width: (g.to - g.from) * scale }
+            }
+          />
+        ))}
       {selBounds && (
         <>
           <div

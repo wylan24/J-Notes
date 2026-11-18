@@ -232,6 +232,8 @@ function EditorInner({
   const [scribbleErase, setScribbleErase] = useState(() => readPref('jnotes.scribbleErase', true));
   const [lasso, setLasso] = useState<LassoSettings>(() => normalizeLassoSettings(readPref<unknown>('jnotes.lasso', null)));
   useEffect(() => writePref('jnotes.lasso', lasso), [lasso]);
+  const [snap, setSnap] = useState(() => readPref('jnotes.snap', true));
+  useEffect(() => writePref('jnotes.snap', snap), [snap]);
   useEffect(() => writePref('jnotes.scribbleErase', scribbleErase), [scribbleErase]);
   useEffect(() => writePref('jnotes.tapeColor', tapeColor), [tapeColor]);
   // Tape strips lifted to show what is under them: a viewing state for this visit, not saved.
@@ -458,6 +460,7 @@ function EditorInner({
     eraseKinds: eraser.kinds,
     lassoShape: lasso.shape,
     lassoKinds: lasso.kinds,
+    snap,
     text: textStyle,
     stickyColor,
     tapeColor,
@@ -1541,6 +1544,15 @@ function EditorInner({
                   </>
                 ) : null;
               })()}
+              <button
+                className={`chip ${snap ? 'active' : ''}`}
+                aria-pressed={snap}
+                title="Snap: moved selections line up with other objects, the page and its lines"
+                onClick={() => setSnap(!snap)}
+              >
+                <Icon name="grid" /> Snap
+              </button>
+              <span className="divider" />
               <div className="erase-kinds" role="group" aria-label="Lasso selects">
                 <span className="tool-hint">Selects</span>
                 {LASSO_KINDS.map((k) => {
