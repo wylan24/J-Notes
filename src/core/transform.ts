@@ -4,6 +4,7 @@ import type { Bounds, Vec } from './geometry';
 import { canRotate, itemBounds, normalizeRotation, STICKY_ICON } from './items';
 import { updateItemOp, type DocOp } from './ops';
 import { lineEnds, lineGeometry } from './shapeItems';
+import { detachFromUnmoved } from './connectors';
 import { selectedItems, selectedStrokes, type Selection } from './selection';
 
 /** [a, b, c, d, e, f], as in canvas `setTransform`: x' = a·x + c·y + e, y' = b·x + d·y + f. */
@@ -123,8 +124,9 @@ export function transformSelectionOps(page: Page, sel: Selection, m: Matrix): Do
   const ops: DocOp[] = [];
   const ids = selectedStrokes(page, sel).map((s) => s.id);
   if (ids.length) ops.push({ type: 'strokes.transformed', pageId: page.id, ids, matrix: m });
+  const moving = new Set(sel.itemIds);
   for (const it of selectedItems(page, sel)) {
-    const op = updateItemOp(page, it.id, itemPatch(it, m));
+    const op = updateItemOp(page, it.id, { ...itemPatch(it, m), ...detachFromUnmoved(it, moving) });
     if (op) ops.push(op);
   }
   return ops;

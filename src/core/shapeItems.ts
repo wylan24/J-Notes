@@ -1,6 +1,6 @@
 // Shape and line items: their geometry, hit testing, and how recognised ink becomes one.
 // Pure, so the renderer, PDF export, eraser and tests share one description of each outline.
-import type { DashStyle, BoxPoint, LineItem, ShapeItem, ArrowEnds } from './model';
+import type { ArrowEnds, Bend, BoxPoint, DashStyle, LineItem, LineRoute, ShapeItem } from './model';
 import type { Bounds, Vec } from './geometry';
 import { distToSegmentSq, pointInPolygon } from './geometry';
 import type { Shape } from './shapes';
@@ -67,9 +67,73 @@ export function newLine(a: Vec, b: Vec, style: ShapeStyle, arrow?: ArrowEnds): L
   return { id: newId(), kind: 'line', ...lineGeometry(a, b), color: style.color, width: style.width, ...dashField(style.dash), ...(arrow ? { arrow } : {}) };
 }
 
-/** The path a line is drawn along, start to end. */
+/** The bend a curved line gets until it is dragged: a gentle bulge to one side. */
+export const DEFAULT_CURVE: Bend = { t: 0.5, n: 0.2 };
+const CURVE_STEPS = 32;
+
+/** Curved: the quadratic control point. */
+function curveControl(a: Vec, b: Vec, bend: Bend): Vec {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  return { x: a.x + bend.t * dx - bend.n * dy, y: a.y + bend.t * dy + bend.n * dx };
+}
+
+/** Elbows run across, up or down, then across again when the ends are further apart sideways; otherwise the other way round. */
+const elbowAcross = (a: Vec, b: Vec) => Math.abs(b.x - a.x) >= Math.abs(b.y - a.y);
+
+/** The path a line is drawn along, start to end: two points when straight, more when curved or elbowed. */
 export function linePath(it: LineItem): Vec[] {
-  return lineEnds(it);
+  const [a, b] = lineEnds(it);
+  if (it.route === 'curved') {
+    const c = curveControl(a, b, it.bend ?? DEFAULT_CURVE);
+    return Array.from({ length: CURVE_STEPS + 1 }, (_, i) => {
+      const t = i / CURVE_STEPS, u = 1 - t;
+      return { x: u * u * a.x + 2 * u * t * c.x + t * t * b.x, y: u * u * a.y + 2 * u * t * c.y + t * t * b.y };
+    });
+  }
+  if (it.route === 'elbow') {
+    const t = it.bend?.t ?? 0.5;
+    if (elbowAcross(a, b)) {
+      const x = a.x + t * (b.x - a.x);
+      return [a, { x, y: a.y }, { x, y: b.y }, b];
+    }
+    const y = a.y + t * (b.y - a.y);
+    return [a, { x: a.x, y }, { x: b.x, y }, b];
+  }
+  return [a, b];
+}
+
+/** Where the bend handle sits: the middle of the curve, of the elbow's middle segment, or of a straight line. */
+export function bendHandle(it: LineItem): Vec {
+  const [a, b] = lineEnds(it);
+  if (it.route === 'curved') {
+    const c = curveControl(a, b, it.bend ?? DEFAULT_CURVE);
+    return { x: 0.25 * a.x + 0.5 * c.x + 0.25 * b.x, y: 0.25 * a.y + 0.5 * c.y + 0.25 * b.y };
+  }
+  if (it.route === 'elbow') {
+    const p = linePath(it);
+    return { x: (p[1].x + p[2].x) / 2, y: (p[1].y + p[2].y) / 2 };
+  }
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
+/**
+ * The route and bend that put the bend handle at `p`. Dragging a straight line's handle curves it;
+ * an elbow's handle slides its middle segment.
+ */
+export function bendTo(it: LineItem, p: Vec): { route: LineRoute; bend: Bend } {
+  const [a, b] = lineEnds(it);
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy || 1;
+  if (it.route === 'elbow') {
+    const across = elbowAcross(a, b);
+    const span = across ? dx : dy;
+    const t = span ? ((across ? p.x - a.x : p.y - a.y) / span) : 0.5;
+    return { route: 'elbow', bend: { t: Math.max(-1, Math.min(2, t)), n: 0 } };
+  }
+  // The handle is the curve's midpoint, halfway between the ends' midpoint and the control point.
+  const c = { x: 2 * p.x - (a.x + b.x) / 2, y: 2 * p.y - (a.y + b.y) / 2 };
+  const vx = c.x - a.x, vy = c.y - a.y;
+  return { route: 'curved', bend: { t: (vx * dx + vy * dy) / len2, n: (vy * dx - vx * dy) / len2 } };
 }
 
 /** The open V of an arrowhead at `tip`, for a line arriving from `from`: [barb, tip, barb]. */

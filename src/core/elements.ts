@@ -2,6 +2,7 @@
 import { DEFAULT_PAGE_SIZE, type Page, type PageSize, type PageItem, type Stroke } from './model';
 import type { Vec } from './geometry';
 import { newId } from './ids';
+import { reidItems } from './connectors';
 import type { DocOp } from './ops';
 import { selectedItems, selectedStrokes, selectionBounds, type Selection } from './selection';
 import { transformItem, transformStroke, type Matrix } from './transform';
@@ -68,7 +69,7 @@ export function placeElement(
   const y = Math.min(Math.max(0, center.y - h / 2), size.h - h);
   const m: Matrix = [k, 0, 0, k, x, y];
   const strokes = c.strokes.map((s) => ({ ...transformStroke(s, m), id: newId() }));
-  const items = c.items.map((it) => ({ ...transformItem(it, m), id: newId() }));
+  const items = reidItems(c.items.map((it) => transformItem(it, m)));
   const ops: DocOp[] = [];
   if (strokes.length) ops.push({ type: 'strokes.added', pageId, strokes });
   if (items.length) ops.push({ type: 'items.added', pageId, items });

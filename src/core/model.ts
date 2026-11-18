@@ -182,7 +182,29 @@ export interface ShapeItem extends ItemBase {
 /** Arrowheads on a line: at its end, its start, or both. Absent for none. */
 export type ArrowEnds = 'end' | 'start' | 'both';
 
-/** A straight line or arrow. Its two ends are stored as fractions of its box, so moving and scaling the box carries them. */
+/** Where a connector's end is fastened: an item, and a point on it as a fraction of its unturned box. */
+export interface Attachment {
+  id: string;
+  at: BoxPoint;
+}
+
+/** How a line runs between its ends. Absent means straight. */
+export type LineRoute = 'curved' | 'elbow';
+
+/**
+ * A bend, relative to the line's ends so it survives moving, scaling and turning: `t` is how far
+ * along from start to end (0..1), `n` how far to the side, as a fraction of the start–end distance.
+ */
+export interface Bend {
+  t: number;
+  n: number;
+}
+
+/**
+ * A line, arrow or connector. Its two ends are stored as fractions of its box, so moving and scaling
+ * the box carries them. A connector is a line with an end attached to a shape (or another item): it
+ * follows that item when it moves.
+ */
 export interface LineItem extends ItemBase {
   kind: 'line';
   /** Start and end, as fractions of the box. */
@@ -191,6 +213,13 @@ export interface LineItem extends ItemBase {
   width: number;
   dash?: Exclude<DashStyle, 'solid'>;
   arrow?: ArrowEnds;
+  route?: LineRoute;
+  /** Curved: where the curve bulges to. Elbow: `t` places the middle segment. Absent for the default. */
+  bend?: Bend;
+  /** What the start is attached to. */
+  from?: Attachment;
+  /** What the end is attached to. */
+  to?: Attachment;
 }
 
 export type PageItem = TextItem | ImageItem | StickyItem | LinkItem | TapeItem | ShapeItem | LineItem;

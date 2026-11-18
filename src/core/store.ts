@@ -1,5 +1,6 @@
 import type { NotebookDoc } from './model';
 import { applyOp, inverseOp, type DocEvent, type DocOp } from './ops';
+import { applyWithFollowUps } from './connectors';
 
 const MAX_UNDO = 200;
 
@@ -29,7 +30,13 @@ export class DocumentStore {
   dispatch(ops: DocOp[], record: Record = 'do'): void {
     if (!ops.length) return;
     let next = this.doc;
-    for (const op of ops) next = applyOp(next, op);
+    if (record === 'do') {
+      // Connectors follow the items they are attached to, in the same undo step. Undo and redo
+      // replay a recorded group, which already holds those updates.
+      ({ doc: next, ops } = applyWithFollowUps(next, ops));
+    } else {
+      for (const op of ops) next = applyOp(next, op);
+    }
     this.doc = next;
 
     const inverse = ops.map(inverseOp).reverse();

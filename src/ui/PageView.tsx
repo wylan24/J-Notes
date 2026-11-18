@@ -30,7 +30,8 @@ import { inkKind, type InkKind } from '../core/contentKinds';
 import { CropOverlay } from './CropOverlay';
 import { SelectionMenu, type MenuAction } from './SelectionMenu';
 import { ShapeStyleRow } from './ShapeStyle';
-import { itemFromShape, touchesCircle } from '../core/shapeItems';
+import { bendHandle, bendTo, itemFromShape, lineEnds, lineGeometry, touchesCircle } from '../core/shapeItems';
+import { anchorPoint, attachDrawnLine, attachmentAt, followConnectors } from '../core/connectors';
 import { animatedResolver, ensureGif, gifFrameIndex, isAnimated, isStatic } from '../render/gifs';
 import { screenshotRect, type Rect } from '../core/screenshot';
 import { cropPatch, flipPatch } from '../core/imageEdit';
@@ -166,6 +167,8 @@ const FONT_KEYS = Object.keys(FONTS) as FontKey[];
 const measureFor = (it: PageItem) => (it.kind === 'text' ? measurer(it.font, it.size) : measurer('sans', STICKY_TEXT_SIZE));
 
 const HOLD_MS = 550;
+/** How near (screen px) an end must be to an item's edge to attach to it. */
+const ATTACH_SLOP_PX = 14;
 /** Strokes starting this close to a ruler edge (screen px) are drawn along it. */
 const RULER_REACH_PX = 28;
 
@@ -289,6 +292,8 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [resize, setResize] = useState<{ pointerId: number; sx: number; sy: number; item: PageItem; preview: PageItem } | null>(null);
   const visibleRef = useRef(false);
+  // Dragging a selected line's end or bend handle.
+  const [lineEdit, setLineEdit] = useState<{ pointerId: number; handle: 0 | 1 | 'bend'; item: LineItem; preview: LineItem } | null>(null);
 
   const dpr = Math.min(window.devicePixelRatio || 1, 3);
   const scale = zoom;
@@ -462,6 +467,13 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     previewTransform(next ? translate(next.dx, next.dy) : null);
   };
 
+  /** Item previews plus the connectors attached to them, re-routed to follow. */
+  const withFollowers = (moved: Map<string, PageItem>): Map<string, PageItem> => {
+    const items = pageRef.current.items.map((it) => moved.get(it.id) ?? it);
+    for (const [id, line] of followConnectors(items)) if (!moved.has(id)) moved.set(id, line);
+    return moved;
+  };
+
   /**
    * Show the selection under `m` (null ends the preview): strokes on the live layer, items on the
    * base layer so they keep their place under or over the ink.
@@ -471,7 +483,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     if (m) scheduleLive();
     if (selected?.itemIds.length) {
       const ids = new Set(selected.itemIds);
-      itemOverride.current = m ? new Map(pageRef.current.items.filter((it) => ids.has(it.id)).map((it) => [it.id, transformItem(it, m)])) : null;
+      itemOverride.current = m ? withFollowers(new Map(pageRef.current.items.filter((it) => ids.has(it.id)).map((it) => [it.id, transformItem(it, m)]))) : null;
       if (m) renderBase();
     }
   };
@@ -843,7 +855,9 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
         // drawn during a recording stay ink so tapping them still plays the audio from there.
         if (shape && a.stroke.tool === 'pen' && a.stroke.points[0]?.t === undefined) {
           const fill = tool.kind === 'shapes' ? tool.shapeFill : null;
-          const item = itemFromShape(shape, { color: a.stroke.color, width: a.stroke.width, dash: a.stroke.dash ?? 'solid', fill });
+          let item = itemFromShape(shape, { color: a.stroke.color, width: a.stroke.width, dash: a.stroke.dash ?? 'solid', fill });
+          // A line drawn from the edge of a shape (or to one) connects to it.
+          if (item.kind === 'line') item = attachDrawnLine(pageRef.current, item, ATTACH_SLOP_PX / scale);
           store.dispatch([{ type: 'items.added', pageId: page.id, items: [item] }]);
           return;
         }
@@ -907,7 +921,8 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   // --- Selection (lasso result) -------------------------------------------------
   const selStrokes = selected ? selectedStrokes(page, selected) : [];
   // While resizing, the box follows the preview rather than the stored item.
-  const shownPage = resize ? { ...page, items: page.items.map((it) => (it.id === resize.item.id ? resize.preview : it)) } : page;
+  const previewed = resize ? resize.preview : lineEdit ? lineEdit.preview : null;
+  const shownPage = previewed ? { ...page, items: page.items.map((it) => (it.id === previewed.id ? previewed : it)) } : page;
   const selBounds = selected && !editing && !cropping && selectionBounds(shownPage, selected);
   const soleItem = selected && !selected.strokeIds.length && selected.itemIds.length === 1 ? (page.items.find((it) => it.id === selected.itemIds[0]) ?? null) : null;
   // A turned item resizes with the corner handles (uniformly, about a corner) rather than its own handle.
@@ -1014,6 +1029,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     setDragState(null);
     setXformState(null);
     setResize(null);
+    setLineEdit(null);
     renderBase();
     clearLive();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1181,7 +1197,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     if (!resize || e.pointerId !== resize.pointerId) return;
     const { item } = resize;
     const preview = resizeItem(item, item.w + (e.clientX - resize.sx) / scale, item.h + (e.clientY - resize.sy) / scale, measureFor(item));
-    itemOverride.current = new Map([[item.id, preview]]);
+    itemOverride.current = withFollowers(new Map([[item.id, preview]]));
     renderBase();
     setResize({ ...resize, preview });
   };
@@ -1194,6 +1210,52 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     if (op) store.dispatch([op]);
     else renderBase();
   };
+
+  // --- Line handles: drag an end (attaching it to what it is dropped on) or the bend ------------
+  const onLineDown = (handle: 0 | 1 | 'bend') => (e: React.PointerEvent<HTMLDivElement>) => {
+    if (soleItem?.kind !== 'line') return;
+    e.stopPropagation();
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setLineEdit({ pointerId: e.pointerId, handle, item: soleItem, preview: soleItem });
+  };
+  const onLineMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!lineEdit || e.pointerId !== lineEdit.pointerId) return;
+    const { item, handle } = lineEdit;
+    const p = pagePoint(e);
+    let preview: LineItem;
+    if (handle === 'bend') {
+      preview = { ...item, ...bendTo(item, p) };
+    } else {
+      const key = handle === 0 ? 'from' : 'to';
+      const other = handle === 0 ? item.to : item.from;
+      let att = attachmentAt(pageRef.current, p, ATTACH_SLOP_PX / scale, new Set([item.id]));
+      if (att && att.id === other?.id) att = null; // not both ends on one item
+      const target = att && pageRef.current.items.find((it) => it.id === att!.id);
+      const ends = lineEnds(item);
+      ends[handle] = att && target ? anchorPoint(target, att.at) : p;
+      const { [key]: _old, ...rest } = item;
+      preview = { ...rest, ...lineGeometry(ends[0], ends[1]), ...(att ? { [key]: att } : {}) } as LineItem;
+    }
+    itemOverride.current = new Map([[item.id, preview]]);
+    renderBase();
+    setLineEdit({ ...lineEdit, preview });
+  };
+  const onLineUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!lineEdit || e.pointerId !== lineEdit.pointerId) return;
+    const { item, preview, handle } = lineEdit;
+    itemOverride.current = null;
+    setLineEdit(null);
+    const patch =
+      handle === 'bend'
+        ? { route: preview.route, bend: preview.bend }
+        : { x: preview.x, y: preview.y, w: preview.w, h: preview.h, ends: preview.ends, [handle === 0 ? 'from' : 'to']: handle === 0 ? preview.from : preview.to };
+    const changed = JSON.stringify(preview) !== JSON.stringify(item);
+    const op = changed ? updateItemOp(page, item.id, patch) : null;
+    if (op) store.dispatch([op]);
+    else renderBase();
+  };
+  const shownLine = soleItem?.kind === 'line' ? (lineEdit?.preview ?? soleItem) : null;
 
   // --- Zoom window target box: drag to move it ----------------------------------------
   const targetDrag = useRef<{ pointerId: number; sx: number; sy: number; x: number; y: number } | null>(null);
@@ -1289,7 +1351,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
             onPointerCancel={onSelUp}
             onDoubleClick={editSoleItem}
           >
-            {soleItem && !soleTurned && !drag && !(soleItem.kind === 'sticky' && soleItem.collapsed) && (
+            {soleItem && !soleTurned && !drag && soleItem.kind !== 'line' && !(soleItem.kind === 'sticky' && soleItem.collapsed) && (
               <div
                 className="resize-handle"
                 aria-label="Resize"
@@ -1324,7 +1386,25 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
               </div>
             )}
           </div>
-          {!drag && !resize && !xform && (
+          {shownLine && !drag && !xform && (
+            <>
+              {[...lineEnds(shownLine).map((p, i) => ({ p, handle: i as 0 | 1 })), { p: bendHandle(shownLine), handle: 'bend' as const }].map(({ p, handle }) => (
+                <div
+                  key={handle}
+                  className={`line-handle ${handle === 'bend' ? 'bend' : ''} ${handle !== 'bend' && (handle === 0 ? shownLine.from : shownLine.to) ? 'attached' : ''}`}
+                  data-no-gesture
+                  role="button"
+                  aria-label={handle === 'bend' ? 'Bend the line' : handle === 0 ? 'Move the start' : 'Move the end'}
+                  style={{ left: p.x * scale, top: p.y * scale }}
+                  onPointerDown={onLineDown(handle)}
+                  onPointerMove={onLineMove}
+                  onPointerUp={onLineUp}
+                  onPointerCancel={onLineUp}
+                />
+              ))}
+            </>
+          )}
+          {!drag && !resize && !xform && !lineEdit && (
             <SelectionMenu
               key={selected ? `${selected.strokeIds.join()}|${selected.itemIds.join()}` : 'none'}
               anchor={{ left: selBounds.minX * scale, top: selBounds.minY * scale, bottom: selBounds.maxY * scale }}

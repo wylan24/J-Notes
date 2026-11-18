@@ -1,6 +1,7 @@
 // Page actions: duplicate, insert, change template, and copy between notebooks.
 // Each builds ops (or a page) from current state; the editor dispatches them as one undo step.
 import { newId } from './ids';
+import { reidItems } from './connectors';
 import { blankPage, DEFAULT_PAGE_SIZE, pagePaper, pageSize, type NotebookDoc, type Page, type PageBackground, type PageSize, type Template } from './model';
 import { updateDocOp, updatePageOp, type DocOp } from './ops';
 
@@ -23,7 +24,7 @@ export function clonePage(page: Page, { keepRecordings }: { keepRecordings: bool
     const { rec: _rec, ...rest } = s;
     return { ...rest, id: newId(), points: s.points.map(({ t: _t, ...pt }) => pt) };
   });
-  return { ...page, id: newId(), strokes, items: page.items.map((it) => ({ ...it, id: newId() })) };
+  return { ...page, id: newId(), strokes, items: reidItems(page.items) };
 }
 
 /** Add a copy of page `index` straight after it. */
