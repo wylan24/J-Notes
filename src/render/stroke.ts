@@ -2,10 +2,11 @@ import { getStroke, type StrokeOptions } from 'perfect-freehand';
 import type { InputPoint, Stroke } from '../core/model';
 import { dabsByLevel, pencilAlpha, pencilDabs, type Dab } from '../core/pencil';
 import { dashLengths, dotCentres, dotPolygon, dotSpacing, splitDashes } from '../core/dash';
+import { stabiliseOptions, streamlinePoints } from '../core/stabilise';
 
 export const HIGHLIGHTER_ALPHA = 0.38;
 
-type InkStyle = Pick<Stroke, 'tool' | 'width' | 'simulatePressure' | 'penStyle' | 'sharpness' | 'shape' | 'dash'>;
+type InkStyle = Pick<Stroke, 'tool' | 'width' | 'simulatePressure' | 'penStyle' | 'sharpness' | 'shape' | 'dash' | 'stabilise'>;
 
 const easeOut = (t: number) => Math.sin((t * Math.PI) / 2);
 
@@ -65,6 +66,8 @@ function outlineToPath(outline: number[][]): Path2D {
 export function strokeOutline(points: InputPoint[], style: InkStyle, complete: boolean): number[][] {
   const input = points.map((p) => ({ x: p.x, y: p.y, pressure: p.p }));
   const options = freehandOptions(style, complete);
+  // The stabilisation chosen when it was written; older strokes keep their pen's own amount.
+  if (style.stabilise !== undefined) Object.assign(options, stabiliseOptions(style.stabilise));
   // Streamlining lags the pen to hide tremor; on a recognised shape it would round the corners off.
   if (style.shape) options.streamline = 0;
   return getStroke(input, options);
@@ -148,7 +151,7 @@ export function paintStroke(ctx: CanvasRenderingContext2D, s: Stroke, path?: Pat
  */
 export function paintInk(ctx: CanvasRenderingContext2D, points: InputPoint[], style: InkStyle & Pick<Stroke, 'color'>, complete: boolean): void {
   if (style.tool === 'pen' && style.penStyle === 'pencil') {
-    paintPencilLevels(ctx, levelPaths(pencilDabs(points, style.width, style.simulatePressure)), style.color, 1);
+    paintPencilLevels(ctx, levelPaths(pencilDabs(steadied(points, style), style.width, style.simulatePressure)), style.color, 1);
     return;
   }
   ctx.fill(buildStrokePath(points, style, complete));
@@ -167,11 +170,16 @@ function levelPaths(dabs: readonly Dab[]): Map<number, Path2D> {
   return out;
 }
 
+/** The pencil draws from its points directly, so it is steadied here rather than by the stroke engine. */
+export function steadied(points: InputPoint[], style: Pick<Stroke, 'stabilise'>): InputPoint[] {
+  return style.stabilise === undefined ? points : streamlinePoints(points, style.stabilise);
+}
+
 const pencilCache = new WeakMap<Stroke, Map<number, Path2D>>();
 function pencilPaths(s: Stroke): Map<number, Path2D> {
   let p = pencilCache.get(s);
   if (!p) {
-    p = levelPaths(pencilDabs(s.points, s.width, s.simulatePressure));
+    p = levelPaths(pencilDabs(steadied(s.points, s), s.width, s.simulatePressure));
     pencilCache.set(s, p);
   }
   return p;

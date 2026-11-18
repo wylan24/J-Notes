@@ -7,7 +7,7 @@ import { LINE_HEIGHT, STICKY_ICON, STICKY_PAD, STICKY_TEXT_SIZE, TEXT_PAD, textL
 import { pagePaper, pageSize, type NotebookDoc, type Page, type PageItem, type Stroke } from '../core/model';
 import { hexToRgb, placement, type Placement } from '../core/pdfPlacement';
 import { templateLayout } from '../core/templates';
-import { HIGHLIGHTER_ALPHA, strokeSvgPath } from '../render/stroke';
+import { HIGHLIGHTER_ALPHA, steadied, strokeSvgPath } from '../render/stroke';
 import { LINK_COLOR } from '../render/items';
 import { LINK_PAD, LINK_TEXT_SIZE } from '../core/links';
 import { dabsByLevel, pencilAlpha, pencilDabs, type Dab } from '../core/pencil';
@@ -264,7 +264,7 @@ class PageDrawer {
   /** Pencil: its dabs as vector circles, one path per opacity level, so pressure survives (the grain doesn't). */
   private pencil(s: Stroke): void {
     const [x, y] = this.place.at(0, 0);
-    for (const [level, dabs] of dabsByLevel(pencilDabs(s.points, s.width, s.simulatePressure))) {
+    for (const [level, dabs] of dabsByLevel(pencilDabs(steadied(s.points, s), s.width, s.simulatePressure))) {
       this.page.drawSvgPath(dabsPath(dabs), { x, y, scale: this.place.s, rotate: this.rotate, color: this.color(s.color), opacity: pencilAlpha(level) });
     }
   }

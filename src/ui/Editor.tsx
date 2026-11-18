@@ -17,6 +17,7 @@ import { TabsBar } from './TabsBar';
 import { closeTab, isTabOpen, savedPosition, savePosition } from './tabsStore';
 import { ChangeTemplateDialog, NotebookPickerDialog, PageMenuItems, type PageActionHandlers } from './PageActions';
 import { PageSidebar, type SidebarTab } from './PageSidebar';
+import { DEFAULT_STABILISE, normaliseStabilise } from '../core/stabilise';
 import { OutlinePanel } from './OutlinePanel';
 import { addOutlineEntry } from '../core/outline';
 import { SearchPanel, type SearchHit } from './SearchPanel';
@@ -84,9 +85,9 @@ const TOOLS: { kind: ToolKind; label: string; key: string }[] = [
 ];
 
 interface InkSettings {
-  pen: { color: string; width: number; style: PenStyle; sharpness: number; dash: DashStyle };
-  highlighter: { color: string; width: number; straight: boolean };
-  shapes: { color: string; width: number; dash: DashStyle };
+  pen: { color: string; width: number; style: PenStyle; sharpness: number; dash: DashStyle; stabilise: number };
+  highlighter: { color: string; width: number; straight: boolean; stabilise: number };
+  shapes: { color: string; width: number; dash: DashStyle; stabilise: number };
 }
 interface EraserSettings {
   size: number;
@@ -95,9 +96,9 @@ interface EraserSettings {
 }
 
 const DEFAULT_INK: InkSettings = {
-  pen: { color: PEN_COLORS[0], width: WIDTHS.pen[1], style: 'fountain', sharpness: 0.5, dash: 'solid' },
-  highlighter: { color: HIGHLIGHT_COLORS[0], width: WIDTHS.highlighter[1], straight: false },
-  shapes: { color: PEN_COLORS[0], width: WIDTHS.shapes[1], dash: 'solid' },
+  pen: { color: PEN_COLORS[0], width: WIDTHS.pen[1], style: 'fountain', sharpness: 0.5, dash: 'solid', stabilise: DEFAULT_STABILISE },
+  highlighter: { color: HIGHLIGHT_COLORS[0], width: WIDTHS.highlighter[1], straight: false, stabilise: DEFAULT_STABILISE },
+  shapes: { color: PEN_COLORS[0], width: WIDTHS.shapes[1], dash: 'solid', stabilise: DEFAULT_STABILISE },
 };
 const DEFAULT_ERASER: EraserSettings = { size: ERASER_SIZES[1], mode: 'stroke', highlighterOnly: false };
 
@@ -205,6 +206,7 @@ function EditorInner({
   const setHighlighter = (patch: Partial<InkSettings['highlighter']>) => setInk((v) => ({ ...v, highlighter: { ...v.highlighter, ...patch } }));
   const setInkTool = (t: ColorTool, patch: { color?: string; width?: number }) => setInk((v) => ({ ...v, [t]: { ...v[t], ...patch } }));
   const setDash = (t: 'pen' | 'shapes', dash: DashStyle) => setInk((v) => ({ ...v, [t]: { ...v[t], dash } }));
+  const setStabilise = (t: ColorTool, stabilise: number) => setInk((v) => ({ ...v, [t]: { ...v[t], stabilise } }));
   const [penOnly, setPenOnly] = useState(() => readPref('jnotes.penOnly', false));
   const [textStyle, setTextStyle] = useState<TextStyle>(() => ({ ...DEFAULT_TEXT, ...readPref<Partial<TextStyle>>('jnotes.text', {}) }));
   const [stickyColor, setStickyColor] = useState(() => readPref('jnotes.stickyColor', STICKY_COLORS[0]));
@@ -404,6 +406,7 @@ function EditorInner({
     penStyle: ink.pen.style,
     sharpness: ink.pen.sharpness,
     dash: inkTool === 'pen' || inkTool === 'shapes' ? ink[inkTool].dash : 'solid',
+    stabilise: inkTool ? normaliseStabilise(ink[inkTool].stabilise) : DEFAULT_STABILISE,
     straight: ink.highlighter.straight,
     eraserPx: eraser.size,
     eraseMode: eraser.mode,
@@ -1270,6 +1273,21 @@ function EditorInner({
                   <span className="width-dot" style={{ width: 4 + i * 4, height: 4 + i * 4 }} />
                 </button>
               ))}
+              <span className="divider" />
+              <label className="range" title="Stabilisation: steadies the line against a shaky hand (more lags the pen a little)">
+                <span>Steady</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={5}
+                  value={Math.round(normaliseStabilise(ink[inkTool].stabilise) * 100)}
+                  aria-label="Stabilisation"
+                  aria-valuetext={`${Math.round(normaliseStabilise(ink[inkTool].stabilise) * 100)}%`}
+                  onChange={(e) => setStabilise(inkTool, Number(e.target.value) / 100)}
+                />
+                <span className="range-value">{Math.round(normaliseStabilise(ink[inkTool].stabilise) * 100)}%</span>
+              </label>
             </>
           )}
           {inkTool === 'highlighter' && (

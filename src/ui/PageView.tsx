@@ -53,6 +53,8 @@ export interface ToolState {
   sharpness: number;
   /** Line style for the pen and Shapes tools. */
   dash: DashStyle;
+  /** How much the current ink tool steadies the line, 0..1. */
+  stabilise: number;
   /** Highlighter draws ruler-straight lines from the first point. */
   straight: boolean;
   /** Eraser radius in screen px, independent of zoom. */

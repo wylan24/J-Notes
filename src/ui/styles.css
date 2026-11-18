@@ -594,3 +594,4 @@ button:disabled { cursor: default; opacity: 0.35; }
 .nb-tab-close:hover { background: var(--surface-2); opacity: 1; }
 .nb-tab-close svg { width: 14px; height: 14px; }
 .tabs-bar + .toolbar { padding-top: 6px; }
+.range-value { min-width: 32px; font-variant-numeric: tabular-nums; }

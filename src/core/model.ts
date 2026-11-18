@@ -66,6 +66,8 @@ export interface Stroke {
   shape?: boolean;
   /** Dashed or dotted; absent for a solid line. */
   dash?: Exclude<DashStyle, 'solid'>;
+  /** How much the line was steadied, 0..1. Absent on strokes from before the setting (they keep their pen's own amount). */
+  stabilise?: number;
   /** The recording this stroke was written during; its points' `t` are times into that recording. */
   rec?: string;
 }
