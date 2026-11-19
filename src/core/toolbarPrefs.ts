@@ -10,6 +10,7 @@ export const TOOLBAR_ITEMS = [
   'eraser',
   'lasso',
   'laser',
+  'tape',
   'ruler',
   'zoomWindow',
   'photo',
@@ -20,7 +21,7 @@ export const TOOLBAR_ITEMS = [
 
 export type ToolbarItem = (typeof TOOLBAR_ITEMS)[number];
 
-const DRAWING: ReadonlySet<ToolbarItem> = new Set(['pen', 'highlighter', 'shapes', 'text', 'sticky', 'eraser', 'lasso', 'laser']);
+const DRAWING: ReadonlySet<ToolbarItem> = new Set(['pen', 'highlighter', 'shapes', 'text', 'sticky', 'eraser', 'lasso', 'laser', 'tape']);
 /** Tools that select what the pointer does (as opposed to panels and overlays). */
 export const isDrawingTool = (item: ToolbarItem) => DRAWING.has(item);
 

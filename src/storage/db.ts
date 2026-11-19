@@ -1,4 +1,6 @@
-import { normalizeDoc, type NotebookDoc, type NotebookMeta } from '../core/model';
+import type { HwrEntry } from '../core/handwriting';
+import { normalizeDoc, type Folder, type NotebookDoc, type NotebookMeta, type Page } from '../core/model';
+import { planFolderDelete } from '../core/folders';
 import type { Session } from '../core/timer';
 import type { SavedElement } from '../core/elements';
 import { replay, type DocEvent } from '../core/ops';
@@ -12,12 +14,15 @@ import { replay, type DocEvent } from '../core/ops';
  *  blobs      image and audio bytes, key [docId, id]; page items refer to them by id
  *  sessions   timer and stopwatch history (not tied to a notebook's lifetime)
  *  elements   saved selections shared by all notebooks, each with copies of its photos
+ *  folders    library folders (nested by parentId); notebooks point at theirs with meta.folderId
+ *  hwr        recognised handwriting, key [docId, key]: the text of each line of ink, by a hash of
+ *             the ink (see core/handwriting), so search never runs the model twice on the same line
  *
  * Loading a notebook = latest snapshot + replay of events after its seq.
  */
 
 const DB_NAME = 'jnotes';
-const DB_VERSION = 4;
+const DB_VERSION = 6;
 
 interface Snapshot {
   docId: string;
@@ -66,6 +71,10 @@ export function openDb(): Promise<IDBDatabase> {
       if (e.oldVersion < 2) db.createObjectStore('blobs', { keyPath: ['docId', 'id'] });
       if (e.oldVersion < 3) db.createObjectStore('sessions', { keyPath: 'id' }).createIndex('endedAt', 'endedAt');
       if (e.oldVersion < 4) db.createObjectStore('elements', { keyPath: 'id' });
+      // v5: folders. Existing notebooks have no folderId and so stay at the top level.
+      if (e.oldVersion < 5) db.createObjectStore('folders', { keyPath: 'id' });
+      // v6: recognised handwriting. Built up again in the background, so nothing to migrate.
+      if (e.oldVersion < 6) db.createObjectStore('hwr', { keyPath: ['docId', 'key'] });
     };
     r.onsuccess = () => resolve(r.result);
     r.onerror = () => reject(r.error);
@@ -157,6 +166,23 @@ export async function appendEvents(docId: string, events: DocEvent[], metaPatch:
   await done(tx);
 }
 
+/**
+ * Add a page to the end of a notebook that isn't open, with the blobs it refers to, as a logged
+ * `page.added` event. Used to move or copy pages between notebooks.
+ */
+export async function appendPage(docId: string, page: Page, blobs: Pick<StoredBlob, 'id' | 'type' | 'bytes'>[]): Promise<void> {
+  const { doc, seq } = await loadDocument(docId);
+  const db = await openDb();
+  const tx = db.transaction(['events', 'meta', 'blobs'], 'readwrite');
+  const event: DocEvent = { docId, seq: seq + 1, ts: Date.now(), op: { type: 'page.added', index: doc.pages.length, page } };
+  tx.objectStore('events').put(event);
+  for (const b of blobs) tx.objectStore('blobs').put({ ...b, docId } satisfies StoredBlob);
+  const metaStore = tx.objectStore('meta');
+  const cur = await req(metaStore.get(docId) as IDBRequest<NotebookMeta | undefined>);
+  if (cur) metaStore.put({ ...cur, pageCount: doc.pages.length + 1, updatedAt: event.ts });
+  await done(tx);
+}
+
 /** Write a snapshot at `seq` and drop the events it subsumes. */
 export async function compact(docId: string, doc: NotebookDoc, seq: number): Promise<void> {
   const db = await openDb();
@@ -168,11 +194,44 @@ export async function compact(docId: string, doc: NotebookDoc, seq: number): Pro
 
 export async function deleteNotebook(id: string): Promise<void> {
   const db = await openDb();
-  const tx = db.transaction(['meta', 'events', 'snapshots', 'blobs'], 'readwrite');
+  const tx = db.transaction(['meta', 'events', 'snapshots', 'blobs', 'hwr'], 'readwrite');
   tx.objectStore('meta').delete(id);
   tx.objectStore('snapshots').delete(id);
   tx.objectStore('blobs').delete(blobRange(id));
+  tx.objectStore('hwr').delete(blobRange(id));
   tx.objectStore('events').delete(IDBKeyRange.bound([id, 0], [id, Infinity]));
+  await done(tx);
+}
+
+// --- Recognised handwriting ----------------------------------------------------------
+
+/** Every recognised line of one notebook. */
+export async function hwrEntries(docId: string): Promise<HwrEntry[]> {
+  const db = await openDb();
+  return req(db.transaction('hwr').objectStore('hwr').getAll(blobRange(docId)) as IDBRequest<HwrEntry[]>);
+}
+
+/** Every recognised line in the library, for searching notebooks that aren't open. */
+export async function allHwrEntries(): Promise<HwrEntry[]> {
+  const db = await openDb();
+  return req(db.transaction('hwr').objectStore('hwr').getAll() as IDBRequest<HwrEntry[]>);
+}
+
+/** Store recognised lines, and forget lines (by key) that are no longer in the notebook. */
+export async function updateHwrEntries(docId: string, put: HwrEntry[], remove: string[] = []): Promise<void> {
+  const db = await openDb();
+  const tx = db.transaction('hwr', 'readwrite');
+  const store = tx.objectStore('hwr');
+  for (const e of put) store.put({ ...e, docId });
+  for (const key of remove) store.delete([docId, key]);
+  await done(tx);
+}
+
+/** Forget all recognised text (when recognition is turned off). */
+export async function clearHwrEntries(): Promise<void> {
+  const db = await openDb();
+  const tx = db.transaction('hwr', 'readwrite');
+  tx.objectStore('hwr').clear();
   await done(tx);
 }
 
@@ -242,3 +301,53 @@ export async function deleteElement(id: string): Promise<void> {
   await done(tx);
 }
 
+
+// --- Folders ---------------------------------------------------------------------------------
+
+export async function listFolders(): Promise<Folder[]> {
+  const db = await openDb();
+  return req(db.transaction('folders').objectStore('folders').getAll() as IDBRequest<Folder[]>);
+}
+
+/** Create or update a folder. */
+export async function putFolder(folder: Folder): Promise<void> {
+  const db = await openDb();
+  const tx = db.transaction('folders', 'readwrite');
+  tx.objectStore('folders').put(folder);
+  await done(tx);
+}
+
+/** File a notebook in a folder, or at the top level with null. */
+export async function moveNotebook(id: string, folderId: string | null): Promise<void> {
+  const db = await openDb();
+  const tx = db.transaction('meta', 'readwrite');
+  const store = tx.objectStore('meta');
+  const cur = await req(store.get(id) as IDBRequest<NotebookMeta | undefined>);
+  if (cur) {
+    const { folderId: _old, ...rest } = cur;
+    store.put(folderId ? { ...rest, folderId } : rest);
+  }
+  await done(tx);
+}
+
+/**
+ * Delete a folder and its subfolders, moving every notebook inside them to the trash, in one
+ * transaction. Returns how many notebooks were trashed.
+ */
+export async function deleteFolder(id: string): Promise<number> {
+  const db = await openDb();
+  const tx = db.transaction(['folders', 'meta'], 'readwrite');
+  const folders = tx.objectStore('folders');
+  const meta = tx.objectStore('meta');
+  const [allFolders, allMeta] = await Promise.all([req(folders.getAll() as IDBRequest<Folder[]>), req(meta.getAll() as IDBRequest<NotebookMeta[]>)]);
+  const plan = planFolderDelete(allMeta, allFolders, id);
+  const now = Date.now();
+  for (const f of plan.folderIds) folders.delete(f);
+  for (const m of allMeta) {
+    if (!plan.trash.includes(m.id)) continue;
+    const { folderId: _old, ...rest } = m;
+    meta.put({ ...rest, trashedAt: m.trashedAt ?? now });
+  }
+  await done(tx);
+  return plan.trash.length;
+}

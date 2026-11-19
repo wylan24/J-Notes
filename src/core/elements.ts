@@ -1,7 +1,8 @@
 // Elements: a library of saved selections that can be placed on any page of any notebook.
-import { PAGE_H, PAGE_W, type Page, type PageItem, type Stroke } from './model';
+import { DEFAULT_PAGE_SIZE, type Page, type PageSize, type PageItem, type Stroke } from './model';
 import type { Vec } from './geometry';
 import { newId } from './ids';
+import { reidItems } from './connectors';
 import type { DocOp } from './ops';
 import { selectedItems, selectedStrokes, selectionBounds, type Selection } from './selection';
 import { transformItem, transformStroke, type Matrix } from './transform';
@@ -56,14 +57,19 @@ export function defaultElementName(c: ElementContent, existing: number): string 
  * Ops that add a copy of the element centred on `center` (kept on the page, scaled down if it
  * doesn't fit), with fresh ids, and a selection of the copy.
  */
-export function placeElement(c: ElementContent, pageId: string, center: Vec): { ops: DocOp[]; selection: Selection } {
-  const k = Math.min(1, (PAGE_W * 0.9) / Math.max(1, c.w), (PAGE_H * 0.9) / Math.max(1, c.h));
+export function placeElement(
+  c: ElementContent,
+  pageId: string,
+  center: Vec,
+  size: PageSize = DEFAULT_PAGE_SIZE,
+): { ops: DocOp[]; selection: Selection } {
+  const k = Math.min(1, (size.w * 0.9) / Math.max(1, c.w), (size.h * 0.9) / Math.max(1, c.h));
   const w = c.w * k, h = c.h * k;
-  const x = Math.min(Math.max(0, center.x - w / 2), PAGE_W - w);
-  const y = Math.min(Math.max(0, center.y - h / 2), PAGE_H - h);
+  const x = Math.min(Math.max(0, center.x - w / 2), size.w - w);
+  const y = Math.min(Math.max(0, center.y - h / 2), size.h - h);
   const m: Matrix = [k, 0, 0, k, x, y];
   const strokes = c.strokes.map((s) => ({ ...transformStroke(s, m), id: newId() }));
-  const items = c.items.map((it) => ({ ...transformItem(it, m), id: newId() }));
+  const items = reidItems(c.items.map((it) => transformItem(it, m)));
   const ops: DocOp[] = [];
   if (strokes.length) ops.push({ type: 'strokes.added', pageId, strokes });
   if (items.length) ops.push({ type: 'items.added', pageId, items });

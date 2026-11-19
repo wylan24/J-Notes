@@ -1,10 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { InputPoint, Page, Stroke } from '../core/model';
+import { pageSize, type InputPoint, type Page, type Stroke } from '../core/model';
 import type { DocumentStore } from '../core/store';
 import { advance, back, newLine, panelToPage, resizeTarget, shouldAdvance, ZOOM_ASPECT, type ZoomTarget } from '../core/zoomWindow';
 import { paintRegion } from '../render/page';
+import { findLayer } from '../core/layers';
 import { imageResolver, onImagesLoaded } from '../render/items';
-import { buildStrokePath, HIGHLIGHTER_ALPHA } from '../render/stroke';
+import { pdfResolver } from '../render/pdf';
+import { HIGHLIGHTER_ALPHA, paintInk } from '../render/stroke';
 import { Icon } from './icons';
 import { newInkStroke, pressureOf, timeStamp } from './ink';
 import type { ToolState } from './PageView';
@@ -36,7 +38,10 @@ export function ZoomWindow({ store, page, target, setTarget, tool, penOnly, onCl
   const advanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const targetRef = useRef(target);
   targetRef.current = target;
-  const canWrite = tool.kind === 'pen' || tool.kind === 'highlighter';
+  // Ink goes on the page's active layer, which has to be shown and unlocked.
+  const layer = findLayer(page, store.activeLayer(page.id));
+  const layerBlocked = !!layer && (layer.hidden || layer.locked);
+  const canWrite = (tool.kind === 'pen' || tool.kind === 'highlighter') && !layerBlocked;
 
   // Fill the width, but never take more than ~30% of the window's height.
   useLayoutEffect(() => {
@@ -61,7 +66,7 @@ export function ZoomWindow({ store, page, target, setTarget, tool, penOnly, onCl
   const paint = () => {
     const c = baseRef.current;
     if (!c || !size.w) return;
-    paintRegion(c, page, target, size.w, size.h, dpr, { items: { images: imageResolver(store.doc.id) } });
+    paintRegion(c, page, target, size.w, size.h, dpr, { items: { images: imageResolver(store.doc.id) }, pdf: pdfResolver(store.doc.id) });
     // The committed stroke is now in the base layer.
     if (!active.current) {
       const l = liveRef.current;
@@ -93,7 +98,7 @@ export function ZoomWindow({ store, page, target, setTarget, tool, penOnly, onCl
     ctx.setTransform(k, 0, 0, k, -target.x * k, -target.y * k);
     ctx.fillStyle = a.stroke.color;
     if (a.stroke.tool === 'highlighter') ctx.globalAlpha = HIGHLIGHTER_ALPHA;
-    ctx.fill(buildStrokePath(a.stroke.points, a.stroke, false));
+    paintInk(ctx, a.stroke.points, a.stroke, false);
   };
 
   const onDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -128,22 +133,22 @@ export function ZoomWindow({ store, page, target, setTarget, tool, penOnly, onCl
     if (!commit) return paint();
     store.dispatch([{ type: 'strokes.added', pageId: targetRef.current.pageId, strokes: [a.stroke] }]);
     if (shouldAdvance(a.maxX, size.w)) {
-      advanceTimer.current = setTimeout(() => setTarget(advance(targetRef.current, page.template)), ADVANCE_DELAY_MS);
+      advanceTimer.current = setTimeout(() => setTarget(advance(targetRef.current, page.template, pageSize(page))), ADVANCE_DELAY_MS);
     }
   };
 
-  const step = (w: number) => setTarget(resizeTarget(target, w));
+  const step = (w: number) => setTarget(resizeTarget(target, w, pageSize(page)));
 
   return (
     <div className="zoom-window" data-no-gesture>
       <div className="zoom-bar">
-        <button className="icon-btn sm" aria-label="Move back along the line" title="Back" onClick={() => setTarget(back(target))}>
+        <button className="icon-btn sm" aria-label="Move back along the line" title="Back" onClick={() => setTarget(back(target, pageSize(page)))}>
           <Icon name="back" />
         </button>
-        <button className="icon-btn sm" aria-label="Move along the line" title="Forward" onClick={() => setTarget(advance(target, page.template))}>
+        <button className="icon-btn sm" aria-label="Move along the line" title="Forward" onClick={() => setTarget(advance(target, page.template, pageSize(page)))}>
           <Icon name="forward" />
         </button>
-        <button className="icon-btn sm" aria-label="Next line" title="New line" onClick={() => setTarget(newLine(target, page.template))}>
+        <button className="icon-btn sm" aria-label="Next line" title="New line" onClick={() => setTarget(newLine(target, page.template, pageSize(page)))}>
           <Icon name="newline" />
         </button>
         <span className="divider" />
@@ -155,7 +160,11 @@ export function ZoomWindow({ store, page, target, setTarget, tool, penOnly, onCl
         <button className="icon-btn sm" aria-label="More magnification" title="Zoom in" onClick={() => step(target.w / 1.2)}>
           <Icon name="plus" />
         </button>
-        <span className="zoom-hint">{canWrite ? 'Write here; lifting in the shaded end moves along the line' : 'Choose the pen or highlighter to write here'}</span>
+        <span className="zoom-hint">{canWrite
+            ? 'Write here; lifting in the shaded end moves along the line'
+            : layerBlocked
+              ? `${layer!.name} is ${layer!.hidden ? 'hidden' : 'locked'}: choose another layer to write here`
+              : 'Choose the pen or highlighter to write here'}</span>
         <button className="icon-btn sm" aria-label="Close the zoom window" title="Close" onClick={onClose}>
           <Icon name="close" />
         </button>

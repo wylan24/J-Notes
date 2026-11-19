@@ -1,10 +1,13 @@
 // Geometry, layout and factories for page items (text boxes, images, sticky notes).
 // Pure: text measuring is passed in, so this runs in Node tests and the renderer alike.
-import { PAGE_H, PAGE_W, type ImageItem, type Page, type PageItem, type StickyItem, type TextItem } from './model';
+import { DEFAULT_PAGE_SIZE, type RichBlock, type ImageItem, type PageSize, type Page, type PageItem, type StickyItem, type TextItem } from './model';
 import type { Bounds, Vec } from './geometry';
 import { newId } from './ids';
+import { lineBounds, pointOnLine } from './shapeItems';
+import { layoutRich, type RichLine } from './richText';
 
-export type MeasureText = (s: string) => number;
+/** Width of `s` in the item's font; formatted text also asks for bold and italic widths. */
+export type MeasureText = (s: string, bold?: boolean, italic?: boolean) => number;
 
 export const TEXT_PAD = 4;
 export const LINE_HEIGHT = 1.3;
@@ -60,23 +63,77 @@ export function textLines(t: Pick<TextItem, 'text' | 'w'>, measure: MeasureText)
   return wrapLines(t.text, Math.max(1, t.w - 2 * TEXT_PAD), measure);
 }
 
-export function textHeight(t: Pick<TextItem, 'text' | 'w' | 'size'>, measure: MeasureText): number {
-  return textLines(t, measure).length * t.size * LINE_HEIGHT + 2 * TEXT_PAD;
+/** A text box's lines when formatted: laid out from its blocks in its box. */
+export function richTextLines(t: Pick<TextItem, 'w' | 'size'> & { rich: RichBlock[] }, measure: MeasureText): RichLine[] {
+  return layoutRich(t.rich, Math.max(1, t.w - 2 * TEXT_PAD), t.size, measure);
 }
 
-export function itemBounds(it: PageItem): Bounds {
+export function textHeight(t: Pick<TextItem, 'text' | 'w' | 'size' | 'rich'>, measure: MeasureText): number {
+  const lines = t.rich ? richTextLines({ ...t, rich: t.rich }, measure).length : textLines(t, measure).length;
+  return lines * t.size * LINE_HEIGHT + 2 * TEXT_PAD;
+}
+
+/** The item's box before rotation (a collapsed sticky note is its icon). */
+export function itemRect(it: PageItem): Bounds {
   const collapsed = it.kind === 'sticky' && it.collapsed;
   const w = collapsed ? STICKY_ICON : it.w;
   const h = collapsed ? STICKY_ICON : it.h;
   return { minX: it.x, minY: it.y, maxX: it.x + w, maxY: it.y + h };
 }
 
+/**
+ * Photos, text boxes, shapes and open sticky notes turn; links, tape and collapsed notes stay square
+ * to the page. Lines have no turn of their own: turning one moves its ends.
+ */
+export function canRotate(it: PageItem): boolean {
+  return it.kind === 'image' || it.kind === 'text' || it.kind === 'shape' || (it.kind === 'sticky' && !it.collapsed);
+}
+
+/** The item's rotation as drawn: zero for kinds that don't turn. */
+export const itemRotation = (it: PageItem): number => (canRotate(it) ? it.rotation ?? 0 : 0);
+
+/** An angle in (-π, π], with near-zero as undefined so an unturned item has no `rotation` field. */
+export function normalizeRotation(theta: number): number | undefined {
+  let t = theta % (2 * Math.PI);
+  if (t > Math.PI) t -= 2 * Math.PI;
+  if (t <= -Math.PI) t += 2 * Math.PI;
+  return Math.abs(t) < 1e-6 ? undefined : t;
+}
+
+/** The axis-aligned box around the item as drawn, rotation included. */
+export function itemBounds(it: PageItem): Bounds {
+  if (it.kind === 'line') return lineBounds(it);
+  const r = itemRect(it);
+  const theta = itemRotation(it);
+  if (!theta) return r;
+  const cx = (r.minX + r.maxX) / 2, cy = (r.minY + r.maxY) / 2;
+  const hw = (r.maxX - r.minX) / 2, hh = (r.maxY - r.minY) / 2;
+  const c = Math.abs(Math.cos(theta)), s = Math.abs(Math.sin(theta));
+  const ex = hw * c + hh * s, ey = hw * s + hh * c;
+  return { minX: cx - ex, minY: cy - ey, maxX: cx + ex, maxY: cy + ey };
+}
+
+/** Whether `pt` is on the item as drawn (inside its turned box). */
+export function pointOnItem(it: PageItem, pt: Vec): boolean {
+  if (it.kind === 'line') return pointOnLine(it, pt);
+  const r = itemRect(it);
+  const theta = itemRotation(it);
+  let { x, y } = pt;
+  if (theta) {
+    const cx = (r.minX + r.maxX) / 2, cy = (r.minY + r.maxY) / 2;
+    const c = Math.cos(-theta), s = Math.sin(-theta);
+    const dx = x - cx, dy = y - cy;
+    x = cx + dx * c - dy * s;
+    y = cy + dx * s + dy * c;
+  }
+  return x >= r.minX && x <= r.maxX && y >= r.minY && y <= r.maxY;
+}
+
 /** The topmost item at `pt`. Sticky notes are drawn above everything, so they are hit first. */
 export function itemAt(page: Page, pt: Vec, kinds?: PageItem['kind'][]): PageItem | null {
   const hit = (it: PageItem) => {
     if (kinds && !kinds.includes(it.kind)) return false;
-    const b = itemBounds(it);
-    return pt.x >= b.minX && pt.x <= b.maxX && pt.y >= b.minY && pt.y <= b.maxY;
+    return pointOnItem(it, pt);
   };
   const items = page.items;
   for (let i = items.length - 1; i >= 0; i--) if (items[i].kind === 'sticky' && hit(items[i])) return items[i];
@@ -87,34 +144,34 @@ export function itemAt(page: Page, pt: Vec, kinds?: PageItem['kind'][]): PageIte
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 /** Keep a w×h box on the page. */
-function onPage(x: number, y: number, w: number, h: number): Vec {
-  return { x: clamp(x, 0, Math.max(0, PAGE_W - w)), y: clamp(y, 0, Math.max(0, PAGE_H - h)) };
+function onPage(x: number, y: number, w: number, h: number, size: PageSize): Vec {
+  return { x: clamp(x, 0, Math.max(0, size.w - w)), y: clamp(y, 0, Math.max(0, size.h - h)) };
 }
 
 /** A new, empty text box whose first line sits on `pt`. */
-export function newText(pt: Vec, style: TextStyle): TextItem {
-  const w = clamp(PAGE_W - pt.x - 16, 80, 280);
+export function newText(pt: Vec, style: TextStyle, size: PageSize = DEFAULT_PAGE_SIZE): TextItem {
+  const w = clamp(size.w - pt.x - 16, 80, 280);
   const h = style.size * LINE_HEIGHT + 2 * TEXT_PAD;
-  const at = onPage(pt.x - TEXT_PAD, pt.y - h / 2, w, h);
+  const at = onPage(pt.x - TEXT_PAD, pt.y - h / 2, w, h, size);
   return { id: newId(), kind: 'text', ...at, w, h, text: '', ...style };
 }
 
-export function newSticky(center: Vec, color: string): StickyItem {
-  const size = 180;
-  const at = onPage(center.x - size / 2, center.y - size / 2, size, size);
-  return { id: newId(), kind: 'sticky', ...at, w: size, h: size, text: '', color, collapsed: false };
+export function newSticky(center: Vec, color: string, size: PageSize = DEFAULT_PAGE_SIZE): StickyItem {
+  const side = 180;
+  const at = onPage(center.x - side / 2, center.y - side / 2, side, side, size);
+  return { id: newId(), kind: 'sticky', ...at, w: side, h: side, text: '', color, collapsed: false };
 }
 
 /** Size and place an image of the given natural size, centred on `center`, scaled down to fit the page. */
-export function fitImage(naturalW: number, naturalH: number, center: Vec): { x: number; y: number; w: number; h: number } {
-  const k = Math.min(1, (PAGE_W * 0.7) / naturalW, (PAGE_H * 0.5) / naturalH);
+export function fitImage(naturalW: number, naturalH: number, center: Vec, size: PageSize = DEFAULT_PAGE_SIZE): { x: number; y: number; w: number; h: number } {
+  const k = Math.min(1, (size.w * 0.7) / naturalW, (size.h * 0.5) / naturalH);
   const w = Math.max(1, naturalW * k);
   const h = Math.max(1, naturalH * k);
-  return { ...onPage(center.x - w / 2, center.y - h / 2, w, h), w, h };
+  return { ...onPage(center.x - w / 2, center.y - h / 2, w, h, size), w, h };
 }
 
-export function newImage(blobId: string, naturalW: number, naturalH: number, center: Vec): ImageItem {
-  return { id: newId(), kind: 'image', blobId, ...fitImage(naturalW, naturalH, center) };
+export function newImage(blobId: string, naturalW: number, naturalH: number, center: Vec, size: PageSize = DEFAULT_PAGE_SIZE): ImageItem {
+  return { id: newId(), kind: 'image', blobId, ...fitImage(naturalW, naturalH, center, size) };
 }
 
 /**
@@ -131,6 +188,14 @@ export function resizeItem<T extends PageItem>(it: T, w: number, h: number, meas
       const next: TextItem = { ...it, w: Math.max(40, w) };
       return { ...next, h: textHeight(next, measure) } as T;
     }
+    case 'link':
+    case 'tape':
+      return { ...it, w: Math.max(16, w), h: Math.max(16, h) };
+    case 'shape':
+      return { ...it, w: Math.max(8, w), h: Math.max(8, h) };
+    case 'line':
+      // A side the line has no extent along (a level or upright line) stays that way.
+      return { ...it, w: it.w ? Math.max(4, w) : 0, h: it.h ? Math.max(4, h) : 0 };
     default:
       return { ...it, w: Math.max(60, w), h: Math.max(60, h) };
   }

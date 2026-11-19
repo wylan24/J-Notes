@@ -27,6 +27,9 @@ export function newInkStroke(tool: ToolState, pt: InputPoint, pointerType: strin
     stroke.penStyle = tool.penStyle;
     if (tool.penStyle === 'fountain') stroke.sharpness = tool.sharpness;
   }
+  stroke.stabilise = tool.stabilise;
+  // Dashes and dots for the pen and Shapes (the pencil's grain is its own texture, so it stays solid).
+  if (tool.dash !== 'solid' && (tool.kind === 'shapes' || (tool.kind === 'pen' && tool.penStyle !== 'pencil'))) stroke.dash = tool.dash;
   return stroke;
 }
 

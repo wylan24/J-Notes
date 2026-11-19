@@ -1,6 +1,7 @@
 import type { Page, PageItem, Stroke } from './model';
 import { pointInPolygon, strokeBounds, strokesInLasso, type Bounds, type Vec } from './geometry';
 import { newId } from './ids';
+import { detachFromUnmoved, reidItems } from './connectors';
 import { itemBounds } from './items';
 import { removeItemsOp, removeStrokesOp, updateItemOp, type DocOp } from './ops';
 
@@ -58,8 +59,9 @@ export function moveSelectionOps(page: Page, sel: Selection, dx: number, dy: num
   const ops: DocOp[] = [];
   const strokeIds = selectedStrokes(page, sel).map((s) => s.id);
   if (strokeIds.length) ops.push({ type: 'strokes.translated', pageId: page.id, ids: strokeIds, dx, dy });
+  const moving = new Set(sel.itemIds);
   for (const it of selectedItems(page, sel)) {
-    const op = updateItemOp(page, it.id, { x: it.x + dx, y: it.y + dy });
+    const op = updateItemOp(page, it.id, { x: it.x + dx, y: it.y + dy, ...detachFromUnmoved(it, moving) });
     if (op) ops.push(op);
   }
   return ops;
@@ -68,7 +70,7 @@ export function moveSelectionOps(page: Page, sel: Selection, dx: number, dy: num
 /** Copies of the selection, offset by (dx, dy), and a selection of the copies. */
 export function duplicateSelection(page: Page, sel: Selection, dx: number, dy: number): { ops: DocOp[]; selection: Selection } {
   const strokes = selectedStrokes(page, sel).map((s) => ({ ...s, id: newId(), points: s.points.map((p) => ({ ...p, x: p.x + dx, y: p.y + dy })) }));
-  const items = selectedItems(page, sel).map((it) => ({ ...it, id: newId(), x: it.x + dx, y: it.y + dy }));
+  const items = reidItems(selectedItems(page, sel)).map((it) => ({ ...it, x: it.x + dx, y: it.y + dy }));
   const ops: DocOp[] = [];
   if (strokes.length) ops.push({ type: 'strokes.added', pageId: page.id, strokes });
   if (items.length) ops.push({ type: 'items.added', pageId: page.id, items });

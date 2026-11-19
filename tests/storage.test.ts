@@ -2,7 +2,9 @@ import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { NotebookMeta } from '../src/core/model';
 import { DocumentStore } from '../src/core/store';
-import { addSession, appendEvents, deleteElement, listElements, renameElement, saveElement, clearSessions, compact, createNotebook, deleteNotebook, getBlob, getBlobs, listSessions, listNotebooks, loadDocument, openDb, putBlob, resetDbForTests } from '../src/storage/db';
+import { movePageOp, updatePageOp } from '../src/core/ops';
+import { toggleBookmarkOp } from '../src/core/pages';
+import { addSession, allHwrEntries, appendEvents, hwrEntries, updateHwrEntries, appendPage, deleteElement, listElements, renameElement, saveElement, clearSessions, compact, createNotebook, deleteNotebook, getBlob, getBlobs, listSessions, listNotebooks, loadDocument, openDb, putBlob, resetDbForTests } from '../src/storage/db';
 import { Persister } from '../src/storage/persister';
 
 const meta = (id: string): NotebookMeta => ({
@@ -45,6 +47,52 @@ describe('event-sourced storage', () => {
     expect(reloaded.doc).toEqual(store.doc);
     expect(reloaded.doc.pages[0].strokes.map((s) => s.id)).toEqual(['s0', 's1', 's2', 's3']);
     expect((await listNotebooks())[0].pageCount).toBe(1);
+  });
+
+  it('keeps a moved page order and page changes after reload', async () => {
+    const pages = ['a', 'b', 'c'].map((id) => ({ id, template: 'blank' as const, strokes: [], items: [] }));
+    await createNotebook({ ...meta('n3'), pageCount: 3 }, { id: 'n3', pages });
+    const { doc, seq } = await loadDocument('n3');
+    const store = new DocumentStore(doc, seq);
+    const persister = new Persister(store, 0);
+    store.dispatch([movePageOp(store.doc, 'c', 0)!]);
+    store.dispatch([updatePageOp(store.doc.pages[1], { paper: 'yellow' })!]);
+    await persister.dispose();
+
+    const reloaded = await loadDocument('n3');
+    expect(reloaded.doc.pages.map((p) => p.id)).toEqual(['c', 'a', 'b']);
+    expect(reloaded.doc.pages[1].paper).toBe('yellow');
+    expect(reloaded.doc).toEqual(store.doc);
+  });
+
+  it('copies a page to another notebook with its photos', async () => {
+    const photoPage = { id: 'p', template: 'blank' as const, strokes: [], items: [{ id: 'i', kind: 'image' as const, x: 0, y: 0, w: 5, h: 5, blobId: 'photo' }] };
+    await createNotebook(meta('src'), { id: 'src', pages: [photoPage] }, [{ docId: 'src', id: 'photo', type: 'image/png', bytes: new Uint8Array([9, 8]).buffer }]);
+    await createNotebook(meta('dst'), { id: 'dst', pages: [{ id: 'q', template: 'blank', strokes: [], items: [] }] });
+
+    const blobs = await getBlobs('src', ['photo']);
+    await appendPage('dst', { ...photoPage, id: 'copy' }, blobs);
+    await appendPage('dst', { ...photoPage, id: 'copy2' }, blobs); // a second append gets the next seq
+
+    const { doc, seq } = await loadDocument('dst');
+    expect(doc.pages.map((p) => p.id)).toEqual(['q', 'copy', 'copy2']);
+    expect(seq).toBe(2);
+    expect([...new Uint8Array((await getBlob('dst', 'photo'))!.bytes)]).toEqual([9, 8]);
+    expect((await listNotebooks()).find((n) => n.id === 'dst')!.pageCount).toBe(3);
+  });
+
+  it('keeps bookmarks after reload and after compaction', async () => {
+    const pages = ['a', 'b'].map((id) => ({ id, template: 'blank' as const, strokes: [], items: [] }));
+    await createNotebook({ ...meta('n4'), pageCount: 2 }, { id: 'n4', pages });
+    const { doc, seq } = await loadDocument('n4');
+    const store = new DocumentStore(doc, seq);
+    const persister = new Persister(store, 0);
+    store.dispatch([toggleBookmarkOp(store.doc, 'b')!]);
+    await persister.dispose();
+    expect((await loadDocument('n4')).doc.bookmarks).toEqual(['b']);
+
+    await compact('n4', store.doc, store.seq);
+    expect((await loadDocument('n4')).doc.bookmarks).toEqual(['b']);
   });
 
   it('compaction keeps the document identical and drops old events', async () => {
@@ -164,3 +212,21 @@ describe('elements library', () => {
   });
 });
 
+
+describe('recognised handwriting store', () => {
+  it('keeps text per notebook, forgets removed lines, and goes with the notebook', async () => {
+    await createNotebook(meta('a'), { id: 'a', pages: [] });
+    await createNotebook(meta('b'), { id: 'b', pages: [] });
+    await updateHwrEntries('a', [
+      { docId: 'a', key: 'k1', pageId: 'p', text: 'buy milk' },
+      { docId: 'a', key: 'k2', pageId: 'p', text: 'call Sam' },
+    ]);
+    await updateHwrEntries('b', [{ docId: 'b', key: 'k1', pageId: 'q', text: 'other' }]);
+    expect((await hwrEntries('a')).map((e) => e.text).sort()).toEqual(['buy milk', 'call Sam']);
+    await updateHwrEntries('a', [], ['k2']);
+    expect((await hwrEntries('a')).map((e) => e.key)).toEqual(['k1']);
+    await deleteNotebook('a');
+    expect(await hwrEntries('a')).toEqual([]);
+    expect((await allHwrEntries()).map((e) => e.docId)).toEqual(['b']);
+  });
+});

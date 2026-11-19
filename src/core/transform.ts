@@ -1,8 +1,10 @@
 // 2D affine transforms for resizing and rotating lasso selections.
 import type { InputPoint, ItemPatch, Page, PageItem, Stroke } from './model';
 import type { Bounds, Vec } from './geometry';
-import { itemBounds, STICKY_ICON } from './items';
+import { canRotate, itemBounds, normalizeRotation, STICKY_ICON } from './items';
 import { updateItemOp, type DocOp } from './ops';
+import { lineEnds, lineGeometry } from './shapeItems';
+import { detachFromUnmoved } from './connectors';
 import { selectedItems, selectedStrokes, type Selection } from './selection';
 
 /** [a, b, c, d, e, f], as in canvas `setTransform`: x' = a·x + c·y + e, y' = b·x + d·y + f. */
@@ -85,15 +87,20 @@ export function transformStroke(s: Stroke, m: Matrix): Stroke {
 }
 
 /**
- * Items move with their centre and scale uniformly (text boxes scale their font too).
- * Items have no rotation of their own, so rotating a selection carries them around without turning them.
- * A collapsed sticky note keeps its size; its icon is fixed.
+ * Items move with their centre and scale uniformly (text boxes scale their font too). Rotating a
+ * selection turns photos, text boxes and open sticky notes with it; links, tape and collapsed notes
+ * are carried around without turning. A collapsed sticky note keeps its size; its icon is fixed.
  */
 export function transformItem<T extends PageItem>(it: T, m: Matrix): T {
   return { ...it, ...itemPatch(it, m) };
 }
 
 function itemPatch(it: PageItem, m: Matrix): ItemPatch {
+  // A line's ends go where the transform takes them, which also turns it.
+  if (it.kind === 'line') {
+    const [a, b] = lineEnds(it).map((p) => applyMatrix(m, p));
+    return { ...lineGeometry(a, b), width: it.width * matrixScale(m) };
+  }
   const b = itemBounds(it);
   const c = applyMatrix(m, { x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 });
   if (it.kind === 'sticky' && it.collapsed) return { x: c.x - STICKY_ICON / 2, y: c.y - STICKY_ICON / 2 };
@@ -102,6 +109,12 @@ function itemPatch(it: PageItem, m: Matrix): ItemPatch {
   const h = it.h * k;
   const patch: ItemPatch = { x: c.x - w / 2, y: c.y - h / 2, w, h };
   if (it.kind === 'text') patch.size = it.size * k;
+  if (it.kind === 'shape') {
+    patch.width = it.width * k;
+    if (it.radius !== undefined) patch.radius = it.radius * k;
+  }
+  const turn = rotationAngle(m);
+  if (canRotate(it) && Math.abs(turn) > 1e-9) patch.rotation = normalizeRotation((it.rotation ?? 0) + turn);
   return patch;
 }
 
@@ -111,8 +124,9 @@ export function transformSelectionOps(page: Page, sel: Selection, m: Matrix): Do
   const ops: DocOp[] = [];
   const ids = selectedStrokes(page, sel).map((s) => s.id);
   if (ids.length) ops.push({ type: 'strokes.transformed', pageId: page.id, ids, matrix: m });
+  const moving = new Set(sel.itemIds);
   for (const it of selectedItems(page, sel)) {
-    const op = updateItemOp(page, it.id, itemPatch(it, m));
+    const op = updateItemOp(page, it.id, { ...itemPatch(it, m), ...detachFromUnmoved(it, moving) });
     if (op) ops.push(op);
   }
   return ops;

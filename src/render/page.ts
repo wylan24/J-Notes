@@ -1,52 +1,74 @@
-import { PAGE_H, PAGE_W, type Page, type Stroke, type Template } from '../core/model';
+import { pagePaper, pageSize, type Page, type PageBackground, type PageSize, type Paper, type PdfBackground, type Stroke, type Template } from '../core/model';
+import { templateLayout, templateLayoutIn, type LineTone } from '../core/templates';
+import { strokeBounds, type Bounds } from '../core/geometry';
+import { itemBounds } from '../core/items';
+import { contentBounds } from '../core/whiteboard';
+import { contentByLayer } from '../core/layers';
 import { paintStroke } from './stroke';
 import { ensureImage, imageResolver, paintItems, type ImageResolver, type ItemPaintOptions } from './items';
+import { ensurePdfRaster, pdfResolver } from './pdf';
 
-export const PAPER = '#fffefb';
+/** Paper and template-line colours for each paper colour. */
+export const PAPER_STYLES: Record<Paper, Record<LineTone | 'fill' | 'dot' | 'label', string>> = {
+  white: { fill: '#fffefb', rule: '#c9d6e8', margin: '#f0b4b4', grid: '#dde3ec', strong: '#9fb0c7', dot: '#b9c2cf', label: '#8a95a5' },
+  yellow: { fill: '#fdf5d3', rule: '#c4cfd9', margin: '#eaa79f', grid: '#e2dcc0', strong: '#a9a68f', dot: '#bdb59a', label: '#8f8770' },
+  dark: { fill: '#26282c', rule: '#3d4a5c', margin: '#6b3a3a', grid: '#383c43', strong: '#56637a', dot: '#555b65', label: '#8a919c' },
+};
 
-function paintTemplate(ctx: CanvasRenderingContext2D, template: Template): void {
+const TONES: LineTone[] = ['grid', 'rule', 'strong', 'margin'];
+
+function paintTemplate(ctx: CanvasRenderingContext2D, template: Template, size: PageSize, paper: Paper, region?: Bounds): void {
+  const c = PAPER_STYLES[paper];
+  const { lines, dots, labels } = region ? templateLayoutIn(template, size, region) : templateLayout(template, size);
   ctx.save();
-  switch (template) {
-    case 'ruled': {
-      ctx.strokeStyle = '#c9d6e8';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      for (let y = 112; y < PAGE_H - 40; y += 32) {
-        ctx.moveTo(0, y + 0.5);
-        ctx.lineTo(PAGE_W, y + 0.5);
-      }
-      ctx.stroke();
-      ctx.strokeStyle = '#f0b4b4';
-      ctx.beginPath();
-      ctx.moveTo(96.5, 0);
-      ctx.lineTo(96.5, PAGE_H);
-      ctx.stroke();
-      break;
+  ctx.lineWidth = 1;
+  // One path per tone, lightest first; the half-unit offset keeps 1-unit lines crisp at 1×.
+  for (const tone of TONES) {
+    ctx.strokeStyle = c[tone];
+    ctx.beginPath();
+    for (const l of lines) {
+      if (l.tone !== tone) continue;
+      ctx.moveTo(l.x1 + (l.x1 === l.x2 ? 0.5 : 0), l.y1 + (l.y1 === l.y2 ? 0.5 : 0));
+      ctx.lineTo(l.x2 + (l.x1 === l.x2 ? 0.5 : 0), l.y2 + (l.y1 === l.y2 ? 0.5 : 0));
     }
-    case 'grid': {
-      ctx.strokeStyle = '#dde3ec';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      for (let x = 28; x < PAGE_W; x += 28) {
-        ctx.moveTo(x + 0.5, 0);
-        ctx.lineTo(x + 0.5, PAGE_H);
-      }
-      for (let y = 28; y < PAGE_H; y += 28) {
-        ctx.moveTo(0, y + 0.5);
-        ctx.lineTo(PAGE_W, y + 0.5);
-      }
-      ctx.stroke();
-      break;
-    }
-    case 'dotted': {
-      ctx.fillStyle = '#b9c2cf';
-      for (let x = 28; x < PAGE_W; x += 28) for (let y = 28; y < PAGE_H; y += 28) ctx.fillRect(x - 1, y - 1, 2, 2);
-      break;
-    }
-    case 'blank':
-      break;
+    ctx.stroke();
+  }
+  ctx.fillStyle = c.dot;
+  for (const d of dots) ctx.fillRect(d.x - 1, d.y - 1, 2, 2);
+  if (labels.length) {
+    ctx.fillStyle = c.label;
+    ctx.font = '600 12px system-ui, -apple-system, sans-serif';
+    for (const l of labels) ctx.fillText(l.text, l.x, l.y);
   }
   ctx.restore();
+}
+
+/** Draws a PDF page's render for a page of `size` at `wanted` device px per page unit, or null while none is ready. */
+export type PdfResolver = (bg: PdfBackground, size: PageSize, wanted: number) => CanvasImageSource | null;
+
+/**
+ * The page's background beneath the template: a custom template image, fitted inside the page and
+ * centred, or a PDF page, which fills it. Nothing is drawn until it is ready.
+ */
+function paintBackground(ctx: CanvasRenderingContext2D, bg: PageBackground, size: PageSize, opts: PaintOptions): void {
+  if (bg.kind === 'pdf') {
+    // The current transform's scale is the device px per page unit this paint is at.
+    const t = ctx.getTransform();
+    const raster = opts.pdf?.(bg, size, Math.hypot(t.a, t.b));
+    if (raster) {
+      // A render may be shrunk a lot (a thumbnail drawn from the page's render); smooth it properly.
+      ctx.save();
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(raster, 0, 0, size.w, size.h);
+      ctx.restore();
+    }
+    return;
+  }
+  const img = opts.items?.images?.(bg.blobId) as (CanvasImageSource & { width: number; height: number }) | null | undefined;
+  if (!img || !img.width || !img.height) return;
+  const k = Math.min(size.w / img.width, size.h / img.height);
+  const w = img.width * k, h = img.height * k;
+  ctx.drawImage(img, (size.w - w) / 2, (size.h - h) / 2, w, h);
 }
 
 /**
@@ -63,19 +85,22 @@ export function paintStrokes(
   hidden?: ReadonlySet<string>,
   replace?: ReadonlyMap<string, Stroke[]>,
   fade?: (s: Stroke) => boolean,
+  dark = false,
 ): void {
   for (const pass of ['highlighter', 'pen'] as const) {
     for (const s of strokes) {
       if (s.tool !== pass || hidden?.has(s.id)) continue;
       const alpha = fade?.(s) ? AHEAD_ALPHA : 1;
       const repl = replace?.get(s.id);
-      if (repl) repl.forEach((r) => paintStroke(ctx, r, undefined, alpha));
-      else paintStroke(ctx, s, undefined, alpha);
+      if (repl) repl.forEach((r) => paintStroke(ctx, r, undefined, alpha, dark));
+      else paintStroke(ctx, s, undefined, alpha, dark);
     }
   }
 }
 
 export interface PaintOptions {
+  /** Renders of PDF page backgrounds. Without it, PDF pages paint as plain paper. */
+  pdf?: PdfResolver;
   /** Stroke ids not to draw (e.g. being dragged on the live layer). */
   hidden?: ReadonlySet<string>;
   /** Strokes to draw in place of others (e.g. a partial erase in progress). */
@@ -83,32 +108,48 @@ export interface PaintOptions {
   items?: ItemPaintOptions;
   /** Strokes to draw faded (ink an audio playback hasn't reached yet). */
   fade?: (s: Stroke) => boolean;
+  /** Only this part of the page (page units) will be seen: content wholly outside it is skipped. */
+  region?: Bounds;
+  /** Keep ink in its real colours on dark paper (exports); otherwise dark ink shows lighter there. */
+  trueColors?: boolean;
 }
+
+const meets = (a: Bounds, b: Bounds) => a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY;
 
 /**
  * Paint a full page into a canvas at `scale` page-units→CSS px and the given
- * device pixel ratio. Resizes the backing store if needed. Layers, bottom to top:
- * template, images and text boxes, highlighter, pen, sticky notes.
+ * device pixel ratio. Resizes the backing store if needed. Bottom to top: the template, then
+ * each shown page layer in turn: its images and text boxes, highlighter, pen, sticky notes.
  */
 export function paintPage(canvas: HTMLCanvasElement | OffscreenCanvas, page: Page, scale: number, dpr: number, opts: PaintOptions = {}): void {
-  const w = Math.round(PAGE_W * scale * dpr);
-  const h = Math.round(PAGE_H * scale * dpr);
+  const size = pageSize(page);
+  const w = Math.round(size.w * scale * dpr);
+  const h = Math.round(size.h * scale * dpr);
   if (canvas.width !== w) canvas.width = w;
   if (canvas.height !== h) canvas.height = h;
   const ctx = canvas.getContext('2d') as CanvasRenderingContext2D | null;
   if (!ctx) return;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = PAPER;
+  ctx.fillStyle = PAPER_STYLES[pagePaper(page)].fill;
   ctx.fillRect(0, 0, w, h);
-  ctx.setTransform(w / PAGE_W, 0, 0, h / PAGE_H, 0, 0);
+  ctx.setTransform(w / size.w, 0, 0, h / size.h, 0, 0);
   paintContent(ctx, page, opts);
 }
 
 function paintContent(ctx: CanvasRenderingContext2D, page: Page, opts: PaintOptions): void {
-  paintTemplate(ctx, page.template);
-  paintItems(ctx, page.items, 'under', opts.items);
-  paintStrokes(ctx, page.strokes, opts.hidden, opts.replace, opts.fade);
-  paintItems(ctx, page.items, 'over', opts.items);
+  const r = opts.region;
+  const dark = pagePaper(page) === 'dark' && !opts.trueColors;
+  const itemOpts = dark ? { ...opts.items, dark } : opts.items;
+  if (page.background) paintBackground(ctx, page.background, pageSize(page), opts);
+  paintTemplate(ctx, page.template, pageSize(page), pagePaper(page), r);
+  for (const layer of contentByLayer(page)) {
+    // A tile of a large page draws only what reaches into it (an item being dragged counts where it is now).
+    const strokes = r ? layer.strokes.filter((s) => meets(strokeBounds(s), r)) : layer.strokes;
+    const items = r ? layer.items.filter((it) => meets(itemBounds(opts.items?.override?.get(it.id) ?? it), r)) : layer.items;
+    paintItems(ctx, items, 'under', itemOpts);
+    paintStrokes(ctx, strokes, opts.hidden, opts.replace, opts.fade, dark);
+    paintItems(ctx, items, 'over', itemOpts);
+  }
 }
 
 /**
@@ -132,7 +173,7 @@ export function paintRegion(
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = PAPER;
+  ctx.fillStyle = PAPER_STYLES[pagePaper(page)].fill;
   ctx.fillRect(0, 0, w, h);
   const k = w / rect.w;
   ctx.setTransform(k, 0, 0, k, -rect.x * k, -rect.y * k);
@@ -159,19 +200,83 @@ export function renderContentThumbnail(
   return canvas.toDataURL('image/png');
 }
 
-export function renderThumbnail(page: Page, images?: ImageResolver, width = 240): string {
+/** A whiteboard's library thumbnail, the shape of a notebook cover: its content framed on its paper (the middle of the board when empty). */
+export function renderBoardThumbnail(page: Page, docId: string, w = 240, h = Math.round((240 * 1123) / 794)): string {
+  const size = pageSize(page);
+  const b = contentBounds(page) ?? { minX: size.w / 2 - 200, minY: size.h / 2 - 150, maxX: size.w / 2 + 200, maxY: size.h / 2 + 150 };
+  const pad = Math.max(b.maxX - b.minX, b.maxY - b.minY) * 0.06 + 16;
+  let rw = b.maxX - b.minX + 2 * pad, rh = b.maxY - b.minY + 2 * pad;
+  if (rw / rh < w / h) rw = (rh * w) / h;
+  else rh = (rw * h) / w;
+  const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
+  const rect = { x: cx - rw / 2, y: cy - rh / 2, w: rw, h: rh };
   const canvas = document.createElement('canvas');
-  paintPage(canvas, page, width / PAGE_W, 1, { items: { images } });
+  paintRegion(canvas, page, rect, w, h, 1, { items: { images: imageResolver(docId) }, region: { minX: rect.x, minY: rect.y, maxX: rect.x + rw, maxY: rect.y + rh } });
   return canvas.toDataURL('image/png');
 }
 
-/** Export one page at 2× as a PNG. Its images are loaded first so none export as placeholders. */
-export async function exportPagePng(page: Page, docId: string, filename: string): Promise<void> {
-  await Promise.all(page.items.flatMap((it) => (it.kind === 'image' ? [ensureImage(docId, it.blobId)] : [])));
+/** A text document's library thumbnail: its first lines on a white sheet, the shape of a notebook cover. */
+export function renderTextThumbnail(lines: readonly { text: string; heading: number }[], w = 240, h = Math.round((240 * 1123) / 794)): string {
   const canvas = document.createElement('canvas');
-  paintPage(canvas, page, 2, 1, { items: { images: imageResolver(docId) } });
+  canvas.width = w * 2;
+  canvas.height = h * 2;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return '';
+  ctx.scale(2, 2);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, w, h);
+  const pad = 18;
+  let y = pad;
+  for (const line of lines) {
+    const size = line.heading === 1 ? 15 : line.heading === 2 ? 12.5 : line.heading === 3 ? 11 : 9;
+    ctx.font = `${line.heading ? '700 ' : ''}${size}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
+    ctx.fillStyle = line.heading ? '#1d1d1f' : '#4a4a4f';
+    // One line each, cut to the sheet's width.
+    let text = line.text;
+    while (text && ctx.measureText(text).width > w - 2 * pad) text = text.slice(0, -2);
+    y += size * 1.45;
+    if (y > h - pad) break;
+    ctx.fillText(text !== line.text ? `${text}…` : text, pad, y);
+    if (line.heading) y += 3;
+  }
+  return canvas.toDataURL('image/png');
+}
+
+/** A notebook's page as a PNG data URL, `width` CSS px wide, with its photos and PDF background as loaded so far. */
+export function renderThumbnail(page: Page, docId: string, width = 240): string {
+  const canvas = document.createElement('canvas');
+  paintPage(canvas, page, width / pageSize(page).w, 1, { items: { images: imageResolver(docId) }, pdf: pdfResolver(docId) });
+  return canvas.toDataURL('image/png');
+}
+
+/** Export one page at 2× as a PNG. Its images and PDF background are loaded first so none export as placeholders. */
+export async function exportPagePng(page: Page, docId: string, filename: string): Promise<void> {
+  const scale = 2;
+  const bg = page.background;
+  const blobIds = page.items.flatMap((it) => (it.kind === 'image' ? [it.blobId] : []));
+  if (bg?.kind === 'image') blobIds.push(bg.blobId);
+  await Promise.all([
+    ...blobIds.map((id) => ensureImage(docId, id)),
+    ...(bg?.kind === 'pdf' ? [ensurePdfRaster(docId, bg, pageSize(page), scale)] : []),
+  ]);
+  const canvas = document.createElement('canvas');
+  paintPage(canvas, page, scale, 1, { items: { images: imageResolver(docId) }, pdf: pdfResolver(docId), trueColors: true });
   const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/png'));
   if (blob) downloadBlob(blob, filename);
+}
+
+/** Part of a page (`rect`, in page units) as a PNG at `scale`× with its photos and PDF background loaded first. */
+export async function renderRegionPng(page: Page, docId: string, rect: { x: number; y: number; w: number; h: number }, scale = 2): Promise<Blob | null> {
+  const bg = page.background;
+  const blobIds = page.items.flatMap((it) => (it.kind === 'image' ? [it.blobId] : []));
+  if (bg?.kind === 'image') blobIds.push(bg.blobId);
+  await Promise.all([
+    ...blobIds.map((id) => ensureImage(docId, id)),
+    ...(bg?.kind === 'pdf' ? [ensurePdfRaster(docId, bg, pageSize(page), scale)] : []),
+  ]);
+  const canvas = document.createElement('canvas');
+  paintRegion(canvas, page, rect, rect.w * scale, rect.h * scale, 1, { items: { images: imageResolver(docId) }, pdf: pdfResolver(docId), trueColors: true });
+  return new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/png'));
 }
 
 export function downloadBlob(blob: Blob, filename: string): void {

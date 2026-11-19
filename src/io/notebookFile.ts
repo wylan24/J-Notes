@@ -1,5 +1,8 @@
-import { normalizeDoc, type NotebookDoc, type NotebookMeta, type Template } from '../core/model';
+import { textDocBlobIds } from '../core/textDoc';
+import { normalizeDoc, type DocKind, type NotebookDoc, type NotebookMeta, type OutlineEntry, type Template } from '../core/model';
+import { normaliseLevels } from '../core/outline';
 import { newId } from '../core/ids';
+import { isCoverDataUrl } from '../core/cover';
 import type { StoredBlob } from '../storage/db';
 
 /**
@@ -13,6 +16,10 @@ export interface NotebookFile {
   version: 1 | 2;
   title: string;
   cover: string;
+  /** Custom cover picture (data URL); absent when the notebook has none. */
+  coverImage?: string;
+  /** A whiteboard or text document; absent for a notebook. */
+  kind?: DocKind;
   template: Template;
   doc: NotebookDoc;
   blobs?: Record<string, string>;
@@ -21,8 +28,12 @@ export interface NotebookFile {
 /** Blob ids referred to by items anywhere in the notebook. */
 export function referencedBlobIds(doc: NotebookDoc): string[] {
   const ids = new Set<string>();
-  for (const page of doc.pages) for (const it of page.items ?? []) if (it.kind === 'image') ids.add(it.blobId);
+  for (const page of doc.pages) {
+    for (const it of page.items ?? []) if (it.kind === 'image') ids.add(it.blobId);
+    if (page.background) ids.add(page.background.blobId);
+  }
   for (const r of doc.recordings ?? []) ids.add(r.blobId);
+  for (const id of textDocBlobIds(doc.text)) ids.add(id);
   return [...ids];
 }
 
@@ -31,7 +42,17 @@ export function toFile(meta: NotebookMeta, doc: NotebookDoc, blobs: Pick<StoredB
   const used = new Set(referencedBlobIds(doc));
   const embedded: Record<string, string> = {};
   for (const b of blobs) if (used.has(b.id)) embedded[b.id] = bytesToDataUrl(b.type, b.bytes);
-  return { format: 'jnotes-notebook', version: 2, title: meta.title, cover: meta.cover, template: meta.template, doc, blobs: embedded };
+  return {
+    format: 'jnotes-notebook',
+    version: 2,
+    title: meta.title,
+    cover: meta.cover,
+    ...(meta.coverImage ? { coverImage: meta.coverImage } : {}),
+    template: meta.template,
+    ...(meta.kind && meta.kind !== 'notebook' ? { kind: meta.kind } : {}),
+    doc,
+    blobs: embedded,
+  };
 }
 
 export function fromFile(raw: unknown): { meta: NotebookMeta; doc: NotebookDoc; blobs: StoredBlob[] } {
@@ -50,12 +71,22 @@ export function fromFile(raw: unknown): { meta: NotebookMeta; doc: NotebookDoc; 
     }
   }
   return {
-    doc: normalizeDoc({ id, pages: f.doc.pages, ...(Array.isArray(f.doc.recordings) ? { recordings: f.doc.recordings } : {}) }),
+    doc: normalizeDoc({
+      id,
+      pages: f.doc.pages,
+      ...(Array.isArray(f.doc.recordings) ? { recordings: f.doc.recordings } : {}),
+      ...(Array.isArray(f.doc.bookmarks) && f.doc.bookmarks.length ? { bookmarks: f.doc.bookmarks.filter((b) => typeof b === 'string') } : {}),
+      ...outlineFrom(f.doc.outline),
+      ...(f.doc.text && typeof f.doc.text === 'object' && f.doc.text.type === 'doc' ? { text: f.doc.text } : {}),
+    }),
     blobs,
     meta: {
       id,
+      ...(f.kind === 'whiteboard' || f.kind === 'text' ? { kind: f.kind } : {}),
       title: String(f.title || 'Imported notebook'),
       cover: f.cover || '#3d5a80',
+      // Only a picture we could have made; anything else is dropped rather than shown.
+      ...(isCoverDataUrl(f.coverImage) ? { coverImage: f.coverImage } : {}),
       template: f.template || 'blank',
       createdAt: now,
       updatedAt: now,
@@ -86,4 +117,20 @@ export function dataUrlToBytes(url: string): { type: string; bytes: ArrayBuffer 
   const u8 = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
   return { type: m[1] || 'application/octet-stream', bytes: u8.buffer };
+}
+
+/** A file's outline, keeping only well-formed entries. */
+function outlineFrom(raw: unknown): { outline?: OutlineEntry[] } {
+  if (!Array.isArray(raw)) return {};
+  const num = (v: unknown) => typeof v === 'number' && Number.isFinite(v);
+  const entries = raw.filter(
+    (e): e is OutlineEntry =>
+      !!e &&
+      typeof e.id === 'string' &&
+      typeof e.title === 'string' &&
+      typeof e.pageId === 'string' &&
+      num(e.level) &&
+      (e.rect === undefined || (num(e.rect?.x) && num(e.rect?.y) && num(e.rect?.w) && num(e.rect?.h))),
+  );
+  return entries.length ? { outline: normaliseLevels(entries) } : {};
 }

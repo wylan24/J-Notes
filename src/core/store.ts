@@ -1,5 +1,7 @@
 import type { NotebookDoc } from './model';
 import { applyOp, inverseOp, type DocEvent, type DocOp } from './ops';
+import { applyWithFollowUps } from './connectors';
+import { activeLayerId, placeOnActiveLayers } from './layers';
 
 const MAX_UNDO = 200;
 
@@ -20,6 +22,8 @@ export class DocumentStore {
   private eventListeners = new Set<(events: DocEvent[]) => void>();
   /** Bumps on every change; lets React subscribe to undo/redo availability. */
   version = 0;
+  /** The layer chosen on each page (page id → layer id); pages not listed use their top layer. */
+  private activeLayers = new Map<string, string>();
 
   constructor(doc: NotebookDoc, seq = 0) {
     this.doc = doc;
@@ -29,7 +33,15 @@ export class DocumentStore {
   dispatch(ops: DocOp[], record: Record = 'do'): void {
     if (!ops.length) return;
     let next = this.doc;
-    for (const op of ops) next = applyOp(next, op);
+    if (record === 'do') {
+      // New content goes on its page's active layer.
+      ops = placeOnActiveLayers(next, ops, (pageId) => this.activeLayers.get(pageId));
+      // Connectors follow the items they are attached to, in the same undo step. Undo and redo
+      // replay a recorded group, which already holds those updates.
+      ({ doc: next, ops } = applyWithFollowUps(next, ops));
+    } else {
+      for (const op of ops) next = applyOp(next, op);
+    }
     this.doc = next;
 
     const inverse = ops.map(inverseOp).reverse();
@@ -48,6 +60,19 @@ export class DocumentStore {
     this.version++;
     this.listeners.forEach((l) => l());
     this.eventListeners.forEach((l) => l(events));
+  }
+
+  /** The layer tools act on and new content goes on, for page `pageId`. */
+  activeLayer(pageId: string): string {
+    const page = this.doc.pages.find((p) => p.id === pageId);
+    return page ? activeLayerId(page, this.activeLayers.get(pageId)) : '';
+  }
+
+  setActiveLayer(pageId: string, layerId: string): void {
+    if (this.activeLayers.get(pageId) === layerId) return;
+    this.activeLayers.set(pageId, layerId);
+    this.version++;
+    this.listeners.forEach((l) => l());
   }
 
   undo(): void {
