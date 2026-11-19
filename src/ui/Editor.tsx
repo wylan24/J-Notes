@@ -18,7 +18,8 @@ import { LINK_PAD, LINK_TEXT_SIZE, linkLabel, newLink, pushBack, type BackEntry 
 import { LinkDialog } from './LinkDialog';
 import { usePresenter } from './usePresenter';
 import { TabsBar } from './TabsBar';
-import { closeTab, isTabOpen, savedPosition, savePosition } from './tabsStore';
+import { closeTab, isTabOpen, savedPosition, savePosition, takePageJump } from './tabsStore';
+import { AddCardDialog, type CardDraft } from './AddCardDialog';
 import { ChangeTemplateDialog, NotebookPickerDialog, PageMenuItems, type PageActionHandlers } from './PageActions';
 import { PageSidebar, type SidebarTab } from './PageSidebar';
 import { DEFAULT_STABILISE, normaliseStabilise } from '../core/stabilise';
@@ -182,10 +183,18 @@ export function Editor({ id, onExit }: { id: string; onExit: () => void }) {
         <TextDocument key={id} {...state} onExit={onExit} />
       </Suspense>
     );
+  // So do study sets.
+  if (docKind(state.meta) === 'deck')
+    return (
+      <Suspense fallback={<div className="center-msg">Opening…</div>}>
+        <StudySet key={id} {...state} onExit={onExit} />
+      </Suspense>
+    );
   return <EditorInner key={id} {...state} onExit={onExit} />;
 }
 
 const TextDocument = lazy(() => import('./TextDocument'));
+const StudySet = lazy(() => import('./StudySet'));
 
 function EditorInner({
   store,
@@ -683,6 +692,18 @@ function EditorInner({
     }
   };
 
+  // --- Study sets ------------------------------------------------------------------------------
+  // A card being made from the lasso; `picking` while its back is being lassoed on the page.
+  const [cardDraft, setCardDraft] = useState<{ draft: CardDraft; picking: boolean } | null>(null);
+  const addToStudySet = (sel: Selection) => {
+    const page = store.doc.pages.find((p) => p.id === sel.pageId);
+    const drawing = page ? makeElementContent(page, sel) : null;
+    if (!drawing) return;
+    if (cardDraft?.picking) setCardDraft({ draft: { ...cardDraft.draft, back: { text: '', drawing } }, picking: false });
+    else setCardDraft({ draft: { front: { text: '', drawing }, back: { text: '' }, source: { docId: store.doc.id, pageId: sel.pageId } }, picking: false });
+    setSelection(null);
+  };
+
   const placeElementAt = async (el: SavedElement, clientX?: number, clientY?: number): Promise<boolean> => {
     const target = photoTarget(clientX, clientY, clientX !== undefined);
     if (!target || layerBlocked(target.pageId)) return false;
@@ -919,6 +940,14 @@ function EditorInner({
       if (scrollDir === 'vertical') el.scrollTo({ top: Math.max(0, box.top - 16), behavior });
       else el.scrollTo({ left: Math.max(0, box.width < el.clientWidth ? box.left - (el.clientWidth - box.width) / 2 : box.left - 16), behavior });
     });
+
+  // Opened to show a particular page (a flashcard's source).
+  useEffect(() => {
+    const pageId = takePageJump(initialMeta.id);
+    const index = pageId ? store.doc.pages.findIndex((p) => p.id === pageId) : -1;
+    if (index >= 0) scrollToPage(index, 'auto');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /** Dispatch a page.added op (one undo step) and scroll to the new page. */
   const addPageOp = (op: ReturnType<typeof insertPageOp>) => {
@@ -1932,6 +1961,8 @@ function EditorInner({
               onCopy={(sel, cut) => void copySelection(sel, cut)}
               onScreenshot={(pageId, rect, action) => void takeScreenshot(pageId, rect, action)}
               onAddToOutline={addSelectionToOutline}
+              onAddToStudySet={addToStudySet}
+              cardBackPending={!!cardDraft?.picking}
               onLayerBlocked={(name, why) => setNotice(layerNotice(name, why))}
               onScribbleErase={(n) => setNotice(`Scribbled out ${n} ${n === 1 ? 'stroke' : 'strokes'} · Undo brings ${n === 1 ? 'it' : 'them'} back`)}
               revealed={revealed}
@@ -2015,6 +2046,32 @@ function EditorInner({
       )}
 
       {customising && <ToolbarSettings prefs={toolbarPrefs} onChange={setToolbarPrefs} onClose={() => setCustomising(false)} />}
+      {cardDraft?.picking && (
+        <div className="card-pick-banner" role="status">
+          <span>Lasso the back of the card, then choose More › Use as card back.</span>
+          <button className="btn sm" onClick={() => setCardDraft({ ...cardDraft, picking: false })}>
+            Type it instead
+          </button>
+          <button className="btn sm ghost" onClick={() => setCardDraft(null)}>
+            Cancel card
+          </button>
+        </div>
+      )}
+      {cardDraft && !cardDraft.picking && (
+        <AddCardDialog
+          draft={cardDraft.draft}
+          onChange={(draft) => setCardDraft({ draft, picking: false })}
+          onPickBack={() => {
+            setCardDraft({ ...cardDraft, picking: true });
+            setToolKind('lasso');
+          }}
+          onDone={(message) => {
+            setCardDraft(null);
+            setNotice(message);
+          }}
+          onCancel={() => setCardDraft(null)}
+        />
+      )}
       {notice && (
         <div className="toast" role="status">
           {notice}

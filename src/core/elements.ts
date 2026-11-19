@@ -1,5 +1,5 @@
 // Elements: a library of saved selections that can be placed on any page of any notebook.
-import { DEFAULT_PAGE_SIZE, type Page, type PageSize, type PageItem, type Stroke } from './model';
+import { DEFAULT_PAGE_SIZE, type Drawing, type Page, type PageSize } from './model';
 import type { Vec } from './geometry';
 import { newId } from './ids';
 import { reidItems } from './connectors';
@@ -8,12 +8,7 @@ import { selectedItems, selectedStrokes, selectionBounds, type Selection } from 
 import { transformItem, transformStroke, type Matrix } from './transform';
 
 /** An element's drawing: strokes and items with their bounding box's top-left at (0, 0). */
-export interface ElementContent {
-  strokes: Stroke[];
-  items: PageItem[];
-  w: number;
-  h: number;
-}
+export type ElementContent = Drawing;
 
 export interface SavedElement extends ElementContent {
   id: string;

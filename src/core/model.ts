@@ -390,6 +390,67 @@ export interface NotebookDoc {
    * the blob store by `blobId`. Absent for notebooks and whiteboards.
    */
   text?: TextDocNode;
+  /** A study set's flashcards, in the order they were made. Absent for other documents. */
+  cards?: StudyCard[];
+  /** A study set's review history, one entry per day studied, oldest first. Absent until studied. */
+  studyLog?: StudyDay[];
+}
+
+/**
+ * Loose content: strokes and items with their bounding box's top-left at (0, 0). A saved element,
+ * or the drawing on a flashcard.
+ */
+export interface Drawing {
+  strokes: Stroke[];
+  items: PageItem[];
+  w: number;
+  h: number;
+}
+
+/** One side of a flashcard: typed text, a drawing (ink, photos, anything lassoed from a page), or both. */
+export interface CardSide {
+  /** '' for none. */
+  text: string;
+  /** Photos in it refer to the study set's blob store. */
+  drawing?: Drawing;
+}
+
+/** Spaced repetition state of a card (SM-2). */
+export interface ReviewState {
+  /** Easiness factor, at least 1.3. */
+  ease: number;
+  /** Days until the next review, as last scheduled. */
+  interval: number;
+  /** Correct answers in a row. */
+  reps: number;
+  /** Times it was forgotten after being learnt. */
+  lapses: number;
+  /** When it is next due, ms since the epoch. */
+  due: number;
+  /** When it was last answered. */
+  last: number;
+}
+
+export interface StudyCard {
+  id: string;
+  front: CardSide;
+  back: CardSide;
+  createdAt: number;
+  /** Absent for a card not studied yet. */
+  review?: ReviewState;
+  /** The notebook page it was made from, for going back to it. */
+  source?: { docId: string; pageId: string };
+}
+
+/** Fields a `cards.updated` op can change. */
+export type CardPatch = Partial<Omit<StudyCard, 'id' | 'createdAt'>>;
+
+/** Answers given on one day (local date, YYYY-MM-DD). */
+export interface StudyDay {
+  day: string;
+  reviewed: number;
+  /** Answered Hard, Good or Easy (not Again). */
+  correct: number;
 }
 
 /** A node of a text document, as ProseMirror JSON. */
@@ -416,15 +477,17 @@ export interface OutlineEntry {
 }
 
 /** Notebook-level fields a `doc.updated` op can change. An undefined value means the field is absent. */
-export type DocPatch = Partial<Pick<NotebookDoc, 'bookmarks' | 'outline' | 'text'>>;
+export type DocPatch = Partial<Pick<NotebookDoc, 'bookmarks' | 'outline' | 'text' | 'studyLog'>>;
 
 /**
- * What a document is: a notebook of pages, a whiteboard (one very large page), or a typed text
- * document. Absent on documents from before there was a choice (= notebook).
+ * What a document is: a notebook of pages, a whiteboard (one very large page), a typed text
+ * document, or a study set of flashcards. Absent on documents from before there was a choice (= notebook).
  */
-export type DocKind = 'notebook' | 'whiteboard' | 'text';
+export type DocKind = 'notebook' | 'whiteboard' | 'text' | 'deck';
 
-export const docKind = (meta: Pick<NotebookMeta, 'kind'>): DocKind => (meta.kind === 'whiteboard' || meta.kind === 'text' ? meta.kind : 'notebook');
+export const DOC_KINDS: readonly DocKind[] = ['notebook', 'whiteboard', 'text', 'deck'];
+
+export const docKind = (meta: Pick<NotebookMeta, 'kind'>): DocKind => (meta.kind && DOC_KINDS.includes(meta.kind) ? meta.kind : 'notebook');
 
 /** Library-level projection of a notebook (what the library grid shows). */
 export interface NotebookMeta {
@@ -451,6 +514,13 @@ export interface NotebookMeta {
    * with content or renamed.
    */
   quicknote?: true;
+  /** A study set's cards, for the library: how many, and when each is due (0 for a card not studied yet). */
+  deck?: DeckSummary;
+}
+
+export interface DeckSummary {
+  cards: number;
+  due: number[];
 }
 
 /** A salted, slow hash of a notebook's password. The notebook itself is stored unencrypted. */

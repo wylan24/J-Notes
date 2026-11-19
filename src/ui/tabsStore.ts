@@ -47,3 +47,18 @@ export function useTabs(): string[] {
 const positions = new Map<string, ViewPosition>();
 export const savePosition = (id: string, p: ViewPosition) => positions.set(id, p);
 export const savedPosition = (id: string) => positions.get(id);
+
+// A page to show when a notebook next opens (e.g. a flashcard's source), for this window only.
+let pageJump: { docId: string; pageId: string } | null = null;
+
+export function requestPageJump(docId: string, pageId: string): void {
+  pageJump = { docId, pageId };
+}
+
+/** The page asked for when `docId` opens, once; null if none. */
+export function takePageJump(docId: string): string | null {
+  if (pageJump?.docId !== docId) return null;
+  const { pageId } = pageJump;
+  pageJump = null;
+  return pageId;
+}

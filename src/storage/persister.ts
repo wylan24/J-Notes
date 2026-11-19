@@ -1,6 +1,7 @@
 import type { DocEvent } from '../core/ops';
 import type { DocumentStore } from '../core/store';
 import { appendEvents, compact } from './db';
+import { deckSummary } from '../core/study';
 
 export type SaveStatus = 'saved' | 'pending' | 'saving' | 'error';
 
@@ -62,7 +63,9 @@ export class Persister {
     const docId = batch[0].docId;
     this.setStatus('saving');
     try {
-      await appendEvents(docId, batch, { updatedAt: Date.now(), pageCount: this.store.doc.pages.length });
+      const { pages, cards } = this.store.doc;
+      // A study set's library card shows how many cards it has and how many are due.
+      await appendEvents(docId, batch, { updatedAt: Date.now(), pageCount: pages.length, ...(cards ? { deck: deckSummary(cards) } : {}) });
       // Only snapshot when nothing is queued, so store.doc matches the log exactly at store.seq.
       if (!this.queue.length && this.store.seq - this.snapshotSeq >= COMPACT_EVERY) {
         await compact(docId, this.store.doc, this.store.seq);
