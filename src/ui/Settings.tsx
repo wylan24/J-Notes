@@ -5,6 +5,7 @@ import { isIos, isStandalone, usePwa } from '../pwa/register';
 import type { EditorSettings, InkToolName } from './settingsStore';
 import { setHandwritingEnabled, useHandwritingEnabled } from '../hwr/indexer';
 import { onRecognizerStatus, recognizerStatus, startRecognizer, stop as stopRecognizer } from '../hwr/recognizer';
+import { setSpellcheckEnabled, useSpellcheckEnabled } from '../hwr/spellcheck';
 
 const THEMES: { id: Theme; label: string }[] = [
   { id: 'system', label: 'System' },
@@ -88,6 +89,7 @@ function AppSection() {
 function HandwritingSection() {
   const on = useHandwritingEnabled();
   const status = useSyncExternalStore(onRecognizerStatus, recognizerStatus);
+  const spell = useSpellcheckEnabled();
   const mb = (n: number) => `${Math.round(n / 1e6)} MB`;
   return (
     <section>
@@ -122,6 +124,14 @@ function HandwritingSection() {
             </>
           )}
         </p>
+      )}
+      {on && (
+        <Toggle
+          label="Check spelling"
+          hint="Underlines handwritten words the English dictionary doesn’t know. With the lasso, tap one to swap it for a suggestion. Misread words can be underlined too."
+          checked={spell}
+          onChange={setSpellcheckEnabled}
+        />
       )}
     </section>
   );

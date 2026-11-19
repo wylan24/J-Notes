@@ -28,6 +28,10 @@ npm run build      # typecheck and production build in dist/
 - Handwriting search (opt in under Settings → Handwriting): an on-device model reads each line in a
   worker after you pause, and search finds it in the notebook (highlighting the words) and in the
   library. The model is a one-time 70 MB download, then works offline.
+- Convert to text: lasso handwriting and choose Convert to text… to check the reading, then replace the
+  ink with a text box in its colour and size, or copy the text.
+- Spellcheck (Settings → Handwriting → Check spelling): misspelt handwritten words get a red underline;
+  tap one with the lasso to swap it for a suggestion or add it to your dictionary.
 - A Shapes tool that turns rough lines, circles, ellipses, rectangles, triangles, polygons and arrows into clean shapes.
   Anything it doesn't recognise stays as drawn.
 - Hold to snap: with the pen, pause at the end of a stroke to snap it to a shape, then keep moving to adjust it.
@@ -105,5 +109,5 @@ The toolbar plan, phase by phase, is in [docs/TOOLBAR_PLAN.md](docs/TOOLBAR_PLAN
 1. **Sync and collaboration.** Ship the event log to a server, or swap the reducer for a CRDT such as Automerge, as Goodnotes does.
 2. **GPU ink.** Move rendering to WebGL2 or OffscreenCanvas in a worker, with tile caching for very dense pages.
 3. **PDF import and annotation** with pdf.js; Goodnotes uses PDFium.
-4. **Convert handwriting to text and spellcheck**, on the recognition that search already uses.
+4. **Restyle and Math Assist** on top of handwriting recognition (spikes first).
 5. Page reordering, and an outline/thumbnail sidebar.

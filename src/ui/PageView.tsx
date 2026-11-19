@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type MutableRefObject } from 'react';
 import {
   pagePaper,
   pageSize,
@@ -30,6 +30,11 @@ import { isScribble, scribbledStrokes } from '../core/scribble';
 import { inkKind, type InkKind } from '../core/contentKinds';
 import { CropOverlay } from './CropOverlay';
 import { SelectionMenu, type MenuAction } from './SelectionMenu';
+import { ConvertDialog } from './ConvertDialog';
+import type { HandwritingIndex } from '../hwr/indexer';
+import { addPersonalWord, type SpellChecker } from '../hwr/spellcheck';
+import { pageLines } from '../core/handwriting';
+import { findMisspellings, inkColour, replacementFor, textOverInk, textSizeFor, type Misspelling } from '../core/spelling';
 import { align as alignInk, insertSpace, minReflowWidth, moveOps, movedStrokes, reflow, smartInkLayout, straighten, type Align, type InkMove } from '../core/smartInk';
 import type { RichEditorHandle } from './RichTextEditor';
 import { itemBlocks, richPatch } from '../core/richText';
@@ -159,6 +164,10 @@ interface Props {
   highlights?: readonly { x: number; y: number; w: number; h: number }[];
   /** A tool was used while the active layer is hidden or locked, so it did nothing. */
   onLayerBlocked?: (layerName: string, why: 'hidden' | 'locked') => void;
+  /** The notebook's recognised handwriting; null when recognition is off. */
+  handwriting?: HandwritingIndex | null;
+  /** Underline misspelt handwriting; null when spellcheck is off. */
+  spell?: SpellChecker | null;
 }
 
 type EditableItem = TextItem | StickyItem;
@@ -173,6 +182,9 @@ const FONT_KEYS = Object.keys(FONTS) as FontKey[];
 
 /** Measuring for an item's text, so stored heights match what the canvas draws. */
 const measureFor = (it: PageItem) => (it.kind === 'text' ? measurer(it.font, it.size) : measurer('sans', STICKY_TEXT_SIZE));
+
+const noSubscribe = () => () => {};
+const zeroVersion = () => 0;
 
 // The formatted-text editor is large; it loads the first time something is edited.
 const RichTextEditor = lazy(() => import('./RichTextEditor'));
@@ -264,7 +276,7 @@ type Active =
   | { kind: 'laser'; pointerId: number; cursor: Vec }
   | { kind: 'tape'; pointerId: number; start: Vec; cur: Vec };
 
-export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, onScreenshot, onCopy, onAddToOutline, onFollowLink, onEditLink, readOnly, onLaser, onSample, revealed, onToggleTape, onScribbleErase, playback, onSeekInk, highlights, onLayerBlocked }: Props) {
+export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, onScreenshot, onCopy, onAddToOutline, onFollowLink, onEditLink, readOnly, onLaser, onSample, revealed, onToggleTape, onScribbleErase, playback, onSeekInk, highlights, onLayerBlocked, handwriting = null, spell = null }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const baseRef = useRef<HTMLCanvasElement>(null);
   const liveRef = useRef<HTMLCanvasElement>(null);
@@ -318,6 +330,10 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   // Smart Ink: dragging a side handle to rewrap selected handwriting, and the insert-space mode.
   const [reflowing, setReflowing] = useState<{ pointerId: number; side: 'w' | 'e'; from: { left: number; right: number }; left: number; right: number; moves: InkMove[] } | null>(null);
   const [spacing, setSpacing] = useState(false);
+  // Convert to text: the dialog is open for the selection.
+  const [converting, setConverting] = useState(false);
+  // Spellcheck: the underlined word whose suggestions are showing.
+  const [fixing, setFixing] = useState<{ mark: Misspelling; suggestions: string[] } | null>(null);
 
   const dpr = Math.min(window.devicePixelRatio || 1, 3);
   const scale = zoom;
@@ -1236,6 +1252,49 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     if (moves?.length) commitInk(moves);
   };
 
+  /** Swap ink for a text box over where it was, in the ink's colour and a matching size: one undo step. */
+  const inkToText = (strokeIds: string[], box: Bounds, size: number, mid: number, text: string, fitWidth: boolean): TextItem | null => {
+    const strokes = page.strokes.filter((s) => strokeIds.includes(s.id));
+    const remove = removeStrokesOp(page, strokeIds);
+    if (!remove || !text) return null;
+    let item = textOverInk(box, text, size, inkColour(strokes), mid);
+    const measure = measureFor(item);
+    // A single corrected word is as wide as it needs; converted lines keep the ink's width.
+    if (fitWidth) item = { ...item, w: Math.ceil(measure(text)) + 2 * TEXT_PAD + 2 };
+    item = { ...item, h: textHeight(item, measure) };
+    store.dispatch([remove, { type: 'items.added', pageId: page.id, items: [item] }]);
+    return item;
+  };
+
+  const replaceSelectionWithText = (text: string) => {
+    setConverting(false);
+    if (!inkLayout || !selected) return;
+    const lines = inkLayout.lines;
+    const box = { minX: Math.min(...lines.map((l) => l.box.minX)), minY: Math.min(...lines.map((l) => l.box.minY)), maxX: Math.max(...lines.map((l) => l.box.maxX)), maxY: Math.max(...lines.map((l) => l.box.maxY)) };
+    const sizes = lines.map(textSizeFor).sort((a, b) => a - b);
+    const first = lines.reduce((a, b) => (b.box.minY < a.box.minY ? b : a));
+    const item = inkToText(selected.strokeIds, box, sizes[sizes.length >> 1], (first.box.minY + first.box.maxY) / 2, text, false);
+    if (item) setSelection({ pageId: page.id, strokeIds: [], itemIds: [item.id] });
+  };
+
+  // --- Spellcheck: underline handwritten words the dictionary doesn't know ------------------------
+  const inkVersion = useSyncExternalStore(handwriting?.subscribe ?? noSubscribe, handwriting?.getVersion ?? zeroVersion);
+  const misspelt = useMemo(
+    () => (handwriting && spell && !readOnly ? findMisspellings(pageLines(page), handwriting.textOf, spell.correct) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [page, handwriting, inkVersion, spell, readOnly],
+  );
+  // Not over writing that is selected (it may be moving).
+  const marks = selected ? misspelt.filter((m) => !m.strokeIds.some((id) => selected.strokeIds.includes(id))) : misspelt;
+  const sameMark = (a: Misspelling, b: Misspelling) => a.strokeIds.join() === b.strokeIds.join();
+  const shownFix = fixing && marks.some((m) => sameMark(m, fixing.mark)) ? fixing : null;
+  const fixWord = (suggestion: string) => {
+    if (!shownFix) return;
+    const { mark } = shownFix;
+    setFixing(null);
+    inkToText(mark.strokeIds, mark.box, mark.size, mark.mid, replacementFor(mark.token, suggestion), true);
+  };
+
   // A new selection (or none) ends insert-space mode and drops a rewrap in progress.
   useEffect(() => {
     setSpacing(false);
@@ -1381,6 +1440,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   }
   if (inkLayout) {
     moreActions.unshift(
+      { label: 'Convert to text…', onClick: () => setConverting(true), title: 'Read the writing and turn it into a text box' },
       { label: 'Insert space', onClick: () => setSpacing(true), title: 'Tap between words to make room' },
       { label: 'Straighten', onClick: straightenSelection, title: 'Level sloping lines' },
       { label: 'Align left', onClick: () => alignSelection('left') },
@@ -1737,6 +1797,54 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
             </SelectionMenu>
           )}
         </>
+      )}
+      {marks.map((m) => (
+        <button
+          key={m.strokeIds.join()}
+          className={`spell-mark ${tool.kind === 'lasso' ? 'tappable' : ''}`}
+          data-no-gesture
+          aria-label={`Check spelling of “${m.word}”`}
+          title="With the lasso, tap to fix"
+          style={{ left: m.box.minX * scale, top: m.box.maxY * scale + 1, width: (m.box.maxX - m.box.minX) * scale }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => spell && setFixing({ mark: m, suggestions: spell.suggest(m.word).slice(0, 4) })}
+        />
+      ))}
+      {shownFix && (
+        <div
+          className="selection-menu spell-pop"
+          data-no-gesture
+          role="menu"
+          aria-label={`Spelling of “${shownFix.mark.word}”`}
+          style={{ left: shownFix.mark.box.minX * scale, top: shownFix.mark.box.maxY * scale + 10 }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          {shownFix.suggestions.length ? (
+            shownFix.suggestions.map((w) => (
+              <button key={w} role="menuitem" onClick={() => fixWord(w)}>
+                {replacementFor(shownFix.mark.token, w)}
+              </button>
+            ))
+          ) : (
+            <span className="sel-hint">No suggestions</span>
+          )}
+          <button
+            role="menuitem"
+            title="Stop marking this word"
+            onClick={() => {
+              addPersonalWord(shownFix.mark.word);
+              setFixing(null);
+            }}
+          >
+            Add to dictionary
+          </button>
+          <button role="menuitem" aria-label="Close" onClick={() => setFixing(null)}>
+            ✕
+          </button>
+        </div>
+      )}
+      {converting && inkLayout && (
+        <ConvertDialog paragraphs={inkLayout.paragraphs} strokes={selStrokes} handwriting={handwriting} onReplace={replaceSelectionWithText} onClose={() => setConverting(false)} />
       )}
       {highlights?.map((r, i) => (
         <div key={i} className="search-hit" style={{ left: r.x * scale - 2, top: r.y * scale - 2, width: r.w * scale + 4, height: r.h * scale + 4 }} />

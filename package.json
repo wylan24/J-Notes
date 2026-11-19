@@ -20,6 +20,8 @@
     "@tiptap/extension-table": "^3.34.0",
     "@tiptap/pm": "^3.34.0",
     "@tiptap/starter-kit": "^3.34.0",
+    "dictionary-en": "^4.0.0",
+    "nspell": "^2.1.5",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^4.10.38",
     "perfect-freehand": "^1.2.2",

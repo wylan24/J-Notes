@@ -34,6 +34,7 @@ import { OutlinePanel } from './OutlinePanel';
 import { addOutlineEntry } from '../core/outline';
 import { SearchPanel, type SearchHit } from './SearchPanel';
 import { useHandwritingIndex } from '../hwr/indexer';
+import { useSpellChecker } from '../hwr/spellcheck';
 import { PdfExportDialog } from './PdfExportDialog';
 import { LayerExportDialog, LayersPanel, layerNotice } from './LayersPanel';
 import { findLayer, layerNames, pageLayers, visibleContent, withLayers, workingContent } from '../core/layers';
@@ -292,6 +293,7 @@ function EditorInner({
   const [currentPage, setCurrentPage] = useState(0);
   // Recognised handwriting, read in the background while recognition is on (Settings).
   const handwriting = useHandwritingIndex(initialMeta.id, store, currentPage);
+  const spell = useSpellChecker();
   const scrollerRef = useRef<HTMLDivElement>(null);
   const gesture = useRef<GestureState>({ touches: new Map(), active: false });
   const zoomRef = useRef(zoom);
@@ -1952,6 +1954,8 @@ function EditorInner({
               zoomTarget={zoomTarget}
               setZoomTarget={setZoomTarget}
               highlights={searchHit?.pageId === page.id ? searchHit.rects : undefined}
+              handwriting={handwriting}
+              spell={spell}
             />
           ))}
         </div>

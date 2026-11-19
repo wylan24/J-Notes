@@ -11,7 +11,7 @@ It was written on 2026-11-17 after comparing the app with the reference tool lis
 | Eraser | 🟡 Partial | Erases whole strokes, fixed 10px radius | Size options; erasing part of a stroke; "erase highlighter only" option |
 | Highlighter | 🟡 Partial | Freehand highlighting that blends with multiply; hold-to-straighten | Straight-line mode; highlights are drawn in the order they were made, so they don't sit behind handwriting |
 | Shapes | ✅ Done | Shapes tool and pen hold-to-snap recognise lines, circles, ellipses, rectangles, triangles, polygons (up to 8 sides) and arrows | Filled shapes; arrows drawn in two strokes |
-| Lasso | 🟡 Partial | Move, duplicate, recolour, delete, resize, rotate | Convert handwriting to text (waits for the handwriting model) |
+| Lasso | ✅ Done | Move, duplicate, recolour, delete, resize, rotate, convert handwriting to text | |
 | Elements | ✅ Done | Save a lasso selection; tap or drag onto any page of any notebook; rename, delete | Folders or search; export/import of the library |
 | Text box and photos | ✅ Done | Text boxes with font, size and colour; photos by picker, paste or drop, moved and resized | Rotating photos; cropping |
 | Zoom window | ✅ Done | Docked magnified panel, movable target box, moves along the line and wraps to the next | Erasing and selecting inside the panel |
@@ -73,9 +73,9 @@ What was built:
 - Shape strokes carry an optional `shape: true` flag so they render without streamlining, which keeps corners sharp.
   An arrow is two strokes (shaft and head) added in one undoable step.
 
-### Phase 3: Lasso ✅ Done 2026-11-17 (except convert-to-text)
+### Phase 3: Lasso ✅ Done 2026-11-17 (convert-to-text 2026-11-19)
 Add resize and rotate handles, backed by a new `strokes.transformed` operation holding the transform matrix.
-Convert-to-text waits for the handwriting model (README roadmap item 4).
+Convert-to-text came with the handwriting model (feature parity task 10.4): Convert to text… in the selection's More menu.
 
 What was built:
 - `strokes.transformed` holds a matrix `[a, b, c, d, e, f]` (as in canvas `setTransform`). It maps every point and
@@ -206,4 +206,4 @@ What was built:
   has room.
 ## Order
 
-Phase 1 → 0 → 2 → 4 → 3 → 8 → 6 → 5 → 7 → 9. All phases are done; convert-to-text (Phase 3) waits for the handwriting model.
+Phase 1 → 0 → 2 → 4 → 3 → 8 → 6 → 5 → 7 → 9. All phases are done, convert-to-text included.

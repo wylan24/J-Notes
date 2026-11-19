@@ -498,6 +498,17 @@ button:disabled { cursor: default; opacity: 0.35; }
 .search-results mark { background: #ffe066; color: inherit; border-radius: 2px; padding: 0 1px; }
 .search-kind { color: var(--muted); }
 .search-hit { position: absolute; pointer-events: none; background: rgba(255, 214, 0, 0.35); outline: 2px solid rgba(240, 180, 0, 0.9); border-radius: 3px; mix-blend-mode: multiply; }
+/* Spellcheck: a red wavy underline under a misspelt handwritten word; tappable with the lasso. */
+.spell-mark {
+  position: absolute; height: 5px; padding: 0; border: 0; pointer-events: none;
+  background:
+    linear-gradient(135deg, transparent 40%, #e5484d 40% 60%, transparent 60%) 0 0 / 6px 5px repeat-x,
+    linear-gradient(45deg, transparent 40%, #e5484d 40% 60%, transparent 60%) 3px 0 / 6px 5px repeat-x;
+}
+.spell-mark.tappable { pointer-events: auto; cursor: pointer; }
+.spell-mark.tappable::before { content: ''; position: absolute; inset: -16px 0 -8px; }
+.spell-pop { z-index: 6; }
+.convert-text { width: 100%; box-sizing: border-box; font: inherit; font-size: 16px; line-height: 1.4; padding: 10px; border: 1px solid var(--border, #d0d0d0); border-radius: 10px; background: var(--surface); color: var(--text); resize: vertical; }
 
 /* ---------- Export as PDF ---------- */
 .radio-row, .check-row { display: flex; align-items: center; gap: 8px; font-size: 14px; }
