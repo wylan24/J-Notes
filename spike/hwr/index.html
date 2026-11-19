@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>HWR spike</title>
+    <style>
+      :root { --bg: #f6f5f2; --surface: #fff; --text: #1d1d1f; --muted: #6b6b70; --border: #dedcd6; --accent: #2f6fde; --bad: #c0392b; --good: #1e8a4c; }
+      @media (prefers-color-scheme: dark) {
+        :root { --bg: #1b1c1f; --surface: #26282c; --text: #ececee; --muted: #9a9ca3; --border: #3a3c42; --accent: #6c9cff; --bad: #ff7b6b; --good: #5cc98a; }
+      }
+      * { box-sizing: border-box; }
+      /* A Pencil drag must never select the page's text or open the callout. */
+      body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+      pre { -webkit-user-select: text; user-select: text; }
+      body { margin: 0; font: 15px/1.45 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); }
+      header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 2; }
+      header h1 { font-size: 16px; margin: 0 auto 0 0; }
+      main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+      button, select { font: inherit; padding: 7px 14px; border-radius: 9px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+      button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+      button[aria-pressed='true'] { background: var(--text); color: var(--bg); }
+      button:disabled { opacity: 0.5; }
+      .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
+      .muted { color: var(--muted); }
+      .prompt { font-size: 28px; font-weight: 600; margin: 8px 0 4px; }
+      #pad { width: 100%; height: 260px; background: #fffefb; border: 1px solid var(--border); border-radius: 12px; touch-action: none; display: block; }
+      .dots { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; }
+      .dots button { width: 30px; height: 30px; padding: 0; font-size: 11px; border-radius: 6px; }
+      .dots button.done { background: color-mix(in srgb, var(--good) 22%, var(--surface)); }
+      .dots button.here { outline: 2px solid var(--accent); }
+      table { border-collapse: collapse; width: 100%; font-size: 13px; background: var(--surface); border-radius: 10px; overflow: hidden; }
+      th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+      th { font-weight: 600; color: var(--muted); }
+      td.num { font-variant-numeric: tabular-nums; text-align: right; }
+      .ok { color: var(--good); }
+      .err { color: var(--bad); }
+      section { margin-bottom: 28px; }
+      h2 { font-size: 17px; margin: 20px 0 8px; }
+      pre { white-space: pre-wrap; background: var(--surface); padding: 12px; border-radius: 10px; border: 1px solid var(--border); font-size: 12px; }
+      label { display: inline-flex; gap: 6px; align-items: center; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Handwriting recognition spike</h1>
+      <button id="tab-write" aria-pressed="true">Write</button>
+      <button id="tab-run" aria-pressed="false">Run</button>
+    </header>
+    <main id="app"></main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

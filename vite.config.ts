@@ -3,7 +3,9 @@ import { readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import basicSsl from '@vitejs/plugin-basic-ssl';
 import { precacheUrls, precacheVersion } from './src/pwa/cachePlan';
+import { hwrSpike } from './spike/hwr/vitePlugin';
 
 /** Every file under a directory, relative to it. */
 function filesIn(dir: string): string[] {
@@ -42,7 +44,8 @@ function serviceWorker(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), serviceWorker()],
+  // `npm run spike` serves over HTTPS (a self-signed certificate) for the handwriting spike.
+  plugins: [react(), serviceWorker(), hwrSpike(), ...(process.env.HWR_HTTPS ? [basicSsl()] : [])],
   build: {
     rollupOptions: {
       input: { main: 'index.html', sw: 'src/pwa/sw.ts' },
