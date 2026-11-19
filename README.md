@@ -105,6 +105,8 @@ The same log is the natural place to add sync later.
 
 ## Roadmap (what Goodnotes has that this doesn't)
 The toolbar plan, phase by phase, is in [docs/TOOLBAR_PLAN.md](docs/TOOLBAR_PLAN.md).
+The full gap analysis against current Goodnotes, with the build plan, is in
+[docs/FEATURE_PARITY_PLAN.md](docs/FEATURE_PARITY_PLAN.md) (tasks in [tasks/todo.md](tasks/todo.md)).
 
 1. **Sync and collaboration.** Ship the event log to a server, or swap the reducer for a CRDT such as Automerge, as Goodnotes does.
 2. **GPU ink.** Move rendering to WebGL2 or OffscreenCanvas in a worker, with tile caching for very dense pages.
