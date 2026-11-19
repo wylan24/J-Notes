@@ -1,11 +1,24 @@
 // HWR spike (task 10.0): write the prompts with the Pencil, then run both candidate models over
 // what was written and compare accuracy and speed on this device. Dev-only; not part of the app.
 import { PROMPTS } from './prompts';
+import { analyse, fromLatex, fromText, MATH_PROMPTS, sameVerdict, structure, type MathPrompt } from './maths';
+
+// Two sets of lines to write: prose (task 10.0) and maths (task 10.5). Maths samples are stored from
+// index 100, so the prose samples and their results are untouched.
+type SetId = 'prose' | 'maths';
+const SETS: Record<SetId, { label: string; offset: number; prompts: readonly MathPrompt[] }> = {
+  prose: { label: 'Prose', offset: 0, prompts: PROMPTS.map((p) => ({ shown: p, truth: p })) },
+  maths: { label: 'Maths', offset: 100, prompts: MATH_PROMPTS },
+};
+let writeSet: SetId = location.hash.includes('maths') ? 'maths' : 'prose';
+const setOf = (index: number): SetId => (index >= SETS.maths.offset ? 'maths' : 'prose');
 import { corpusScore, loose, score, tidy, timing, type Score, type Timing } from './metrics';
 import { splitWords } from './segment';
 import { renderInk, simpleHtrInput, asStroke, type InkStroke } from './render';
 import { paintStroke } from '../../src/render/stroke';
 import type { Device, ModelId, Reply, Request } from './models.worker';
+import type { Stroke } from '../../src/core/model';
+import { FULL, layoutOf, neatness, restyle, type Neatness } from './restyle';
 
 // --- Samples (IndexedDB) ---------------------------------------------------------------------
 
@@ -61,10 +74,23 @@ const h = <K extends keyof HTMLElementTagNameMap>(tag: K, props: Partial<HTMLEle
 // --- Write --------------------------------------------------------------------------------------
 
 async function showWrite(start?: number) {
-  const samples = new Map((await allSamples()).map((s) => [s.index, s]));
-  let index = start ?? PROMPTS.findIndex((_, i) => !samples.has(i));
+  const all = new Map((await allSamples()).map((s) => [s.index, s]));
+  const { offset, prompts } = SETS[writeSet];
+  // This set's samples, by position in the set.
+  const samples = new Map([...all].filter(([k]) => setOf(k) === writeSet).map(([k, v]) => [k - offset, v]));
+  let index = start ?? prompts.findIndex((_, i) => !samples.has(i));
   if (index < 0) index = 0;
   let strokes: InkStroke[] = samples.get(index)?.strokes.map((s) => ({ ...s, points: [...s.points] })) ?? [];
+  const setButtons = (Object.keys(SETS) as SetId[]).map((id) => {
+    const b = h('button', { textContent: SETS[id].label });
+    b.setAttribute('aria-pressed', String(id === writeSet));
+    b.onclick = () => {
+      writeSet = id;
+      void showWrite();
+    };
+    return b;
+  });
+  const noteEl = h('div', { className: 'muted' });
   let penSeen = false;
 
   const pad = h('canvas', { id: 'pad' });
@@ -83,8 +109,10 @@ async function showWrite(start?: number) {
   const note = h('span', { className: 'muted' });
   app.replaceChildren(
     h('p', { className: 'muted', textContent: 'Write each line as you normally would in notes, on one line, at your usual size. The default pen is used. Wrong? Clear and write it again. Samples stay in this browser until you download them.' }),
+    h('div', { className: 'row' }, ...setButtons),
     counter,
     promptEl,
+    noteEl,
     pad,
     h('div', { className: 'row' }, save, undo, clear, stylus),
     dots,
@@ -109,13 +137,14 @@ async function showWrite(start?: number) {
     strokes.forEach((s, i) => s.points.length && paintStroke(ctx, asStroke(s, i)));
   };
   const refresh = () => {
-    counter.textContent = `Line ${index + 1} of ${PROMPTS.length} · ${samples.size} written`;
-    promptEl.textContent = PROMPTS[index];
-    save.textContent = index === PROMPTS.length - 1 ? 'Save' : 'Save and next';
+    counter.textContent = `Line ${index + 1} of ${prompts.length} · ${samples.size} written`;
+    promptEl.textContent = prompts[index].shown;
+    noteEl.textContent = prompts[index].note ? `(${prompts[index].note})` : '';
+    save.textContent = index === prompts.length - 1 ? 'Save' : 'Save and next';
     save.disabled = !strokes.length;
     dots.replaceChildren(
-      ...PROMPTS.map((_, i) => {
-        const b = h('button', { textContent: String(i + 1), className: `${samples.has(i) ? 'done' : ''} ${i === index ? 'here' : ''}`, title: PROMPTS[i] });
+      ...prompts.map((_, i) => {
+        const b = h('button', { textContent: String(i + 1), className: `${samples.has(i) ? 'done' : ''} ${i === index ? 'here' : ''}`, title: prompts[i].shown });
         b.onclick = () => void showWrite(i);
         return b;
       }),
@@ -174,11 +203,11 @@ async function showWrite(start?: number) {
     refresh();
   };
   save.onclick = async () => {
-    const s: Sample = { index, prompt: PROMPTS[index], strokes, writtenAt: Date.now() };
+    const s: Sample = { index: offset + index, prompt: prompts[index].shown, strokes, writtenAt: Date.now() };
     await putSample(s);
     samples.set(index, s);
-    const next = PROMPTS.findIndex((_, i) => i > index && !samples.has(i));
-    void showWrite(next >= 0 ? next : Math.min(index + 1, PROMPTS.length - 1));
+    const next = prompts.findIndex((_, i) => i > index && !samples.has(i));
+    void showWrite(next >= 0 ? next : Math.min(index + 1, prompts.length - 1));
   };
   sendBtn.onclick = async () => {
     try {
@@ -388,7 +417,9 @@ function summaryMarkdown(runs: ModelRun[], n: number, fontCheck: boolean): strin
 }
 
 async function showRun() {
-  const samples = (await allSamples()).sort((a, b) => a.index - b.index);
+  const all = (await allSamples()).sort((a, b) => a.index - b.index);
+  const samples = all.filter((s) => setOf(s.index) === 'prose');
+  const mathSamples = all.filter((s) => setOf(s.index) === 'maths');
   const noGpu = webgpuReason();
   const picks = CONFIGS.map((c) => {
     const off = c.device === 'webgpu' && noGpu;
@@ -404,6 +435,8 @@ async function showRun() {
     h('div', { className: 'row' }, h('label', {}, fontCheck, 'Font check: typed text in a handwriting font instead of the written lines'), go),
     status,
     out,
+    h('h2', { textContent: 'Maths (task 10.5)' }),
+    mathRow(mathSamples, out),
   );
   go.onclick = async () => {
     const font = fontCheck.checked;
@@ -452,14 +485,185 @@ function renderResults(out: HTMLElement, runs: ModelRun[], n: number, font: bool
   out.replaceChildren(h('h2', { textContent: 'Summary' }), h('pre', { textContent: md }), h('div', { className: 'row' }, copy, send, save), h('h2', { textContent: 'Line by line' }), h('table', {}, h('thead', {}, head), h('tbody', {}, ...body)));
 }
 
+// --- Maths (task 10.5) --------------------------------------------------------------------------
+
+interface MathLine {
+  index: number;
+  truth: string;
+  raw: string;
+  /** The reading in canonical form. */
+  read: string;
+  exact: boolean;
+  verdict: boolean;
+  totalMs: number;
+}
+interface MathRun {
+  label: string;
+  loadMs: number;
+  threads: number;
+  lines: MathLine[];
+  error?: string;
+}
+
+/** Pix2Text's input: the image stretched to 384×384, RGB, scaled to [-1, 1] (its DeiT processor). */
+function mfrInput(img: HTMLCanvasElement): Float32Array {
+  const c = document.createElement('canvas');
+  c.width = c.height = 384;
+  const ctx = c.getContext('2d', { willReadFrequently: true })!;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, 384, 384);
+  const px = ctx.getImageData(0, 0, 384, 384).data;
+  const out = new Float32Array(3 * 384 * 384);
+  for (let i = 0; i < 384 * 384; i++) for (let ch = 0; ch < 3; ch++) out[ch * 384 * 384 + i] = px[i * 4 + ch] / 127.5 - 1;
+  return out;
+}
+
+const MATH_MODELS: { model: ModelId; label: string; parse: (raw: string) => string }[] = [
+  { model: 'trocr', label: 'TrOCR-small-handwritten (q8)', parse: fromText },
+  { model: 'mfr', label: 'Pix2Text MFR (fp32)', parse: fromLatex },
+];
+
+async function runMaths(model: (typeof MATH_MODELS)[number], set: Sample[], font: boolean, progress: (s: string) => void): Promise<MathRun> {
+  const worker = new WorkerClient();
+  const run: MathRun = { label: model.label, loadMs: 0, threads: 1, lines: [] };
+  try {
+    progress(`${model.label}: downloading and starting…`);
+    const loaded = await worker.ask({ type: 'load', model: model.model, device: 'wasm' }, [], LOAD_TIMEOUT_MS);
+    if (loaded.type !== 'loaded') throw new Error(loaded.type === 'error' ? loaded.message : 'unexpected reply');
+    run.loadMs = loaded.ms;
+    run.threads = loaded.threads;
+    for (const [n, s] of set.entries()) {
+      progress(`${model.label}: line ${n + 1} of ${set.length}`);
+      const truth = MATH_PROMPTS[s.index - SETS.maths.offset].truth;
+      const t0 = performance.now();
+      const img = font ? fontLine(s.prompt) : renderInk(s.strokes, 1);
+      let reply: Reply;
+      if (model.model === 'mfr') {
+        const pixels = mfrInput(img);
+        reply = await worker.ask({ type: 'formula', id: n, pixels }, [pixels.buffer]);
+      } else {
+        const rgba = img.getContext('2d')!.getImageData(0, 0, img.width, img.height).data;
+        reply = await worker.ask({ type: 'line', id: n, width: img.width, height: img.height, rgba }, [rgba.buffer]);
+      }
+      if (reply.type !== 'result') throw new Error(reply.type === 'error' ? reply.message : 'unexpected reply');
+      const read = model.parse(reply.text);
+      run.lines.push({ index: s.index, truth, raw: reply.text, read, exact: structure(read) === structure(truth), verdict: sameVerdict(analyse(read), analyse(truth)), totalMs: performance.now() - t0 });
+    }
+  } catch (e) {
+    run.error = (e as Error).message;
+  } finally {
+    worker.close();
+  }
+  return run;
+}
+
+function mathSummary(runs: MathRun[], font: boolean): string {
+  const d = deviceInfo();
+  return [
+    `**${font ? 'Maths font check (not handwriting)' : `${runs[0]?.lines.length ?? 0} handwritten maths lines`}** · ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`,
+    `Device: ${d.device} · ${d.userAgent} · ${d.cores} cores · cross-origin isolated: ${d.crossOriginIsolated}`,
+    '',
+    '| Model | Threads | Load | Line median / p95 | Read exactly | Same verdict |',
+    '|---|---|---|---|---|---|',
+    ...runs.map((r) => {
+      const t = timing(r.lines.slice(1).map((l) => l.totalMs));
+      return `| ${r.label} | ${r.threads} | ${(r.loadMs / 1000).toFixed(1)} s | ${ms(t.median)} / ${ms(t.p95)} | ${r.lines.filter((l) => l.exact).length}/${r.lines.length} | ${r.lines.filter((l) => l.verdict).length}/${r.lines.length} |${r.error ? ` error: ${r.error}` : ''}`;
+    }),
+  ].join('\n');
+}
+
+function mathRow(samples: Sample[], out: HTMLElement): HTMLElement {
+  const font = h('input', { type: 'checkbox', checked: !samples.length });
+  const go = h('button', { className: 'primary', textContent: 'Run maths models' });
+  const status = h('span', { className: 'muted', textContent: samples.length ? `${samples.length} written maths lines.` : 'No maths lines written yet (Write → Maths); Font check tests the pipeline.' });
+  go.onclick = async () => {
+    const f = font.checked;
+    const set: Sample[] = f ? MATH_PROMPTS.map((p, i) => ({ index: SETS.maths.offset + i, prompt: p.shown, strokes: [], writtenAt: 0 })) : samples;
+    if (!set.length) return;
+    go.disabled = true;
+    const runs: MathRun[] = [];
+    for (const m of MATH_MODELS) runs.push(await runMaths(m, set, f, (t) => (status.textContent = t)));
+    go.disabled = false;
+    status.textContent = 'Done.';
+    const md = mathSummary(runs, f);
+    (window as unknown as { mathResults: unknown }).mathResults = { font: f, runs };
+    const send = h('button', { textContent: 'Send results to Mac' });
+    send.onclick = () => void sendToMac(`results-maths-${f ? 'font' : 'ink'}-${Date.now()}`, { format: 'hwr-spike-maths', version: 1, fontCheck: f, device: deviceInfo(), runs }).then(() => (send.textContent = 'Sent'), (e: Error) => (send.textContent = `Could not send: ${e.message}`));
+    const head = h('tr', {}, ...['#', 'Written', ...runs.map((r) => r.label)].map((t) => h('th', { textContent: t })));
+    const body = (runs[0]?.lines ?? []).map((l, i) =>
+      h('tr', {}, h('td', { textContent: String(l.index - SETS.maths.offset + 1) }), h('td', { textContent: l.truth }), ...runs.map((r) => {
+        const x = r.lines[i];
+        return x ? h('td', { className: x.verdict ? 'ok' : 'err' }, x.raw || '—', h('div', { className: 'muted', textContent: `${x.read} · ${ms(x.totalMs)}` })) : h('td');
+      })),
+    );
+    out.replaceChildren(h('h2', { textContent: 'Maths summary' }), h('pre', { textContent: md }), h('div', { className: 'row' }, send), h('table', {}, h('thead', {}, head), h('tbody', {}, ...body)));
+  };
+  return h('div', { className: 'row' }, h('label', {}, font, 'Font check'), go, status);
+}
+
+// --- Restyle (task 10.5) --------------------------------------------------------------------------
+
+const toStrokes = (ink: InkStroke[]) => ink.map((s, i) => asStroke(s, i));
+const toInk = (strokes: Stroke[], ink: InkStroke[]): InkStroke[] => strokes.map((s, i) => ({ points: s.points, pen: ink[i].pen }));
+
+async function showRestyle() {
+  const samples = (await allSamples()).sort((a, b) => a.index - b.index).filter((s) => setOf(s.index) === 'prose');
+  // Words found once, before tidying; both are measured on those same words.
+  const layouts = samples.map((s) => layoutOf(toStrokes(s.strokes)));
+  // ?steps=level,upright,size,spacing,smooth picks the steps (all by default), to measure each alone.
+  const steps = new URLSearchParams(location.search).get('steps');
+  const options = steps === null ? FULL : { level: false, upright: false, size: false, spacing: false, smooth: 0, ...Object.fromEntries(steps.split(',').filter(Boolean).map((k) => [k, k === 'smooth' ? FULL.smooth : true])) };
+  const tidied = samples.map((s, i) => toInk(restyle(toStrokes(s.strokes), options, layouts[i]), s.strokes));
+  const before = samples.map((s, i) => neatness(toStrokes(s.strokes), layouts[i]));
+  const after = tidied.map((ink, i) => neatness(toStrokes(ink), layouts[i]));
+  const avg = (xs: Neatness[], k: keyof Neatness) => xs.reduce((a, x) => a + x[k], 0) / Math.max(1, xs.length);
+  const keys: [keyof Neatness, string][] = [
+    ['wobble', 'Bounce (baseline spread, letter heights)'],
+    ['slant', 'Slant (degrees from upright)'],
+    ['sizeSpread', 'Word size spread'],
+    ['gapSpread', 'Word gap spread'],
+  ];
+  const neat = h('table', {}, h('thead', {}, h('tr', {}, ...['Measure (lower is tidier)', 'As written', 'Restyled', 'Change'].map((t) => h('th', { textContent: t })))), h('tbody', {}, ...keys.map(([k, label]) => {
+    const b = avg(before, k), a = avg(after, k);
+    return h('tr', {}, h('td', { textContent: label }), h('td', { className: 'num', textContent: b.toFixed(3) }), h('td', { className: 'num', textContent: a.toFixed(3) }), h('td', { className: 'num', textContent: b ? `${Math.round(((a - b) / b) * 100)}%` : '—' }));
+  })));
+  const go = h('button', { className: 'primary', textContent: 'Read both with TrOCR' });
+  const status = h('p', { className: 'muted', textContent: samples.length ? `${samples.length} written lines.` : 'No lines written yet: write some on the Write tab first.' });
+  const result = h('div');
+  const sheet = h('div', {}, ...samples.map((s, i) => {
+    const a = renderInk(s.strokes, 1), b = renderInk(tidied[i], 1);
+    return h('div', {}, h('div', { className: 'cap', textContent: `${s.index + 1}. ${s.prompt}` }), h('div', { className: 'pair' }, a, b));
+  }));
+  app.replaceChildren(
+    h('p', { className: 'muted', textContent: 'Each line as written (left) and tidied (right): levelled, upright, words one size and evenly spaced, ink smoothed. The strokes are still the writer’s own.' }),
+    neat,
+    h('div', { className: 'row' }, go),
+    status,
+    result,
+    h('h2', { textContent: 'Before and after' }),
+    sheet,
+  );
+  go.onclick = async () => {
+    go.disabled = true;
+    const runs: ModelRun[] = [];
+    const config = CONFIGS[0];
+    for (const [label, set] of [['As written', samples], ['Restyled', samples.map((s, i) => ({ ...s, strokes: tidied[i] }))]] as const) {
+      runs.push(await runModel({ ...config, label: `TrOCR · ${label}` }, [...set], false, (t) => (status.textContent = t)));
+    }
+    go.disabled = false;
+    status.textContent = 'Done.';
+    renderResults(result, runs, samples.length, false);
+    (window as unknown as { restyleResults: unknown }).restyleResults = { neatness: { before: keys.map(([k]) => avg(before, k)), after: keys.map(([k]) => avg(after, k)) }, runs };
+  };
+}
+
 // --- Tabs ---------------------------------------------------------------------------------------
 
-const tabs = { write: document.getElementById('tab-write')!, run: document.getElementById('tab-run')! };
-function show(tab: 'write' | 'run') {
-  tabs.write.setAttribute('aria-pressed', String(tab === 'write'));
-  tabs.run.setAttribute('aria-pressed', String(tab === 'run'));
-  void (tab === 'write' ? showWrite() : showRun());
+type Tab = 'write' | 'run' | 'restyle';
+const tabs: Record<Tab, HTMLElement> = { write: document.getElementById('tab-write')!, run: document.getElementById('tab-run')!, restyle: document.getElementById('tab-restyle')! };
+function show(tab: Tab) {
+  for (const [k, el] of Object.entries(tabs)) el.setAttribute('aria-pressed', String(k === tab));
+  void (tab === 'write' ? showWrite() : tab === 'run' ? showRun() : showRestyle());
 }
-tabs.write.onclick = () => show('write');
-tabs.run.onclick = () => show('run');
-show(location.hash === '#run' ? 'run' : 'write');
+for (const k of Object.keys(tabs) as Tab[]) tabs[k].onclick = () => show(k);
+show(location.hash === '#run' ? 'run' : location.hash === '#restyle' ? 'restyle' : 'write');

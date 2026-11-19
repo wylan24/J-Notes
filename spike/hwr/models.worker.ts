@@ -3,9 +3,12 @@
 //    Quantised ONNX from Xenova/trocr-small-handwritten, through Transformers.js.
 //  - SimpleHTR (Xournal++ HTR, MIT): a small CNN + BiLSTM + CTC model that reads one word at a time.
 //    ONNX from PellelNitram/xournalpp-htr-simple-htr, through ONNX Runtime Web.
+//  - Pix2Text MFR (breezedeus/pix2text-mfr, MIT; task 10.5): reads a formula image to LaTeX. Same
+//    architecture as TrOCR, but published without the merged decoder Transformers.js needs, so its
+//    encoder and decoder run here directly, decoding greedily (no cache: formulas are short).
 import * as ort from 'onnxruntime-web';
 
-export type ModelId = 'trocr' | 'simplehtr';
+export type ModelId = 'trocr' | 'simplehtr' | 'mfr';
 export type Device = 'wasm' | 'webgpu';
 
 export type Request =
@@ -14,7 +17,9 @@ export type Request =
   /** A line as RGBA pixels (TrOCR). */
   | { type: 'line'; id: number; width: number; height: number; rgba: Uint8ClampedArray }
   /** A line's words, each a 1×32×128 SimpleHTR input, run as one batch. */
-  | { type: 'words'; id: number; inputs: Float32Array[] };
+  | { type: 'words'; id: number; inputs: Float32Array[] }
+  /** A formula as Pix2Text's input: 3×384×384, scaled to [-1, 1]. */
+  | { type: 'formula'; id: number; pixels: Float32Array };
 
 export type Reply =
   | { type: 'loaded'; model: ModelId; ms: number; backend: string; threads: number }
@@ -32,6 +37,52 @@ let threads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurren
 type Recognise = (rgba: Uint8ClampedArray, width: number, height: number) => Promise<string>;
 let trocr: Recognise | null = null;
 let simple: ort.InferenceSession | null = null;
+let mfr: { encoder: ort.InferenceSession; decoder: ort.InferenceSession; decode: (ids: number[]) => string } | null = null;
+
+const MFR = 'https://huggingface.co/breezedeus/pix2text-mfr/resolve/main/';
+// From its generation_config.json.
+const MFR_START = 2, MFR_EOS = 2, MFR_MAX = 120;
+
+async function loadMfr(): Promise<string> {
+  ort.env.wasm.wasmPaths = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ORT_VERSION}/dist/`;
+  ort.env.wasm.numThreads = threads;
+  const { AutoTokenizer, env } = await import('@huggingface/transformers');
+  env.allowLocalModels = false;
+  const bytes = async (f: string) => new Uint8Array(await (await fetch(MFR + f)).arrayBuffer());
+  const [enc, dec, tokenizer] = await Promise.all([bytes('encoder_model.onnx'), bytes('decoder_model.onnx'), AutoTokenizer.from_pretrained('breezedeus/pix2text-mfr')]);
+  const opts = { executionProviders: ['wasm'] };
+  mfr = {
+    encoder: await ort.InferenceSession.create(enc, opts),
+    decoder: await ort.InferenceSession.create(dec, opts),
+    decode: (ids) => tokenizer.decode(ids, { skip_special_tokens: true }),
+  };
+  return 'wasm';
+}
+
+async function readFormula(pixels: Float32Array): Promise<string> {
+  const { encoder, decoder, decode } = mfr!;
+  const enc = await encoder.run({ [encoder.inputNames[0]]: new ort.Tensor('float32', pixels, [1, 3, 384, 384]) });
+  const hidden = enc[encoder.outputNames[0]];
+  const ids = [MFR_START];
+  for (let step = 0; step < MFR_MAX; step++) {
+    const feeds: Record<string, ort.Tensor> = {};
+    for (const name of decoder.inputNames) {
+      if (name.includes('input_ids')) feeds[name] = new ort.Tensor('int64', BigInt64Array.from(ids.map(BigInt)), [1, ids.length]);
+      else if (name.includes('encoder_hidden_states')) feeds[name] = hidden;
+      else if (name.includes('attention_mask')) feeds[name] = new ort.Tensor('int64', BigInt64Array.from(ids.map(() => 1n)), [1, ids.length]);
+    }
+    const out = await decoder.run(feeds);
+    const logits = out[decoder.outputNames[0]];
+    const vocab = logits.dims[2];
+    const data = logits.data as Float32Array;
+    const base = (ids.length - 1) * vocab;
+    let best = 0;
+    for (let c = 1; c < vocab; c++) if (data[base + c] > data[base + best]) best = c;
+    if (best === MFR_EOS) break;
+    ids.push(best);
+  }
+  return decode(ids.slice(1));
+}
 
 const post = (r: Reply) => (self as unknown as Worker).postMessage(r);
 
@@ -86,11 +137,11 @@ self.onmessage = async (e: MessageEvent<Request>) => {
     if (m.type === 'load') {
       if (m.oneThread) threads = 1;
       const t0 = performance.now();
-      const backend = m.model === 'trocr' ? await loadTrocr(m.device) : await loadSimple();
+      const backend = m.model === 'trocr' ? await loadTrocr(m.device) : m.model === 'mfr' ? await loadMfr() : await loadSimple();
       post({ type: 'loaded', model: m.model, ms: performance.now() - t0, backend, threads });
     } else {
       const t0 = performance.now();
-      const text = m.type === 'line' ? await trocr!(m.rgba, m.width, m.height) : await readWords(m.inputs);
+      const text = m.type === 'line' ? await trocr!(m.rgba, m.width, m.height) : m.type === 'formula' ? await readFormula(m.pixels) : await readWords(m.inputs);
       post({ type: 'result', id: m.id, text, ms: performance.now() - t0 });
     }
   } catch (err) {
