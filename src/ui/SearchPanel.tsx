@@ -1,5 +1,7 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { NotebookDoc } from '../core/model';
+import { findInHandwriting } from '../core/handwriting';
+import type { HandwritingIndex } from '../hwr/indexer';
 import { findInPage, normaliseQuery, type PageMatch, type Rect } from '../core/pdfSearch';
 import { pdfText } from '../render/pdf';
 import { Icon } from './icons';
@@ -13,28 +15,38 @@ interface Result {
   pageId: string;
   pageIndex: number;
   match: PageMatch;
+  /** Found in recognised handwriting rather than PDF text. */
+  ink?: true;
 }
 
 /** Stop collecting after this many matches; a query this common needs narrowing anyway. */
 const MAX_RESULTS = 500;
 const DEBOUNCE_MS = 250;
 
+const noopSubscribe = () => () => {};
+const zero = () => 0;
+
 /**
- * Search the text of the notebook's PDF pages. Pages are searched in order and results appear as
- * they are found; typing again abandons the search in progress.
+ * Search the notebook's PDF text and, when recognition is on, its handwriting. PDF pages are
+ * searched in order and results appear as they are found; typing again abandons the search in
+ * progress. Handwriting is searched in its stored text, so it is instant, and results grow as
+ * more lines are read.
  */
 export function SearchPanel({
   doc,
+  handwriting,
   onJump,
   onClose,
 }: {
   doc: NotebookDoc;
+  /** The notebook's recognised handwriting; null when recognition is off. */
+  handwriting?: HandwritingIndex | null;
   /** Show a result: scroll to its page and highlight it. */
   onJump: (hit: SearchHit) => void;
   onClose: () => void;
 }) {
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<Result[]>([]);
+  const [pdfResults, setResults] = useState<Result[]>([]);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [active, setActive] = useState(-1);
   const run = useRef(0);
@@ -78,6 +90,16 @@ export function SearchPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, doc.id, pdfPages.map((p) => p.id).join()]);
 
+  const inkVersion = useSyncExternalStore(handwriting?.subscribe ?? noopSubscribe, handwriting?.getVersion ?? zero);
+  const inkResults = useMemo(
+    (): Result[] => (handwriting ? findInHandwriting(doc, handwriting.textOf, query, MAX_RESULTS).map((r) => ({ ...r, ink: true as const })) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [handwriting, inkVersion, doc, query],
+  );
+  // Both kinds, in page order (handwriting first on a page).
+  const results = useMemo(() => [...inkResults, ...pdfResults].sort((a, b) => a.pageIndex - b.pageIndex).slice(0, MAX_RESULTS), [inkResults, pdfResults]);
+  const reading = handwriting && handwriting.remaining > 0;
+
   const show = (i: number) => {
     const r = results[i];
     if (!r) return;
@@ -101,8 +123,8 @@ export function SearchPanel({
         <input
           ref={input}
           value={query}
-          placeholder="Search PDF text"
-          aria-label="Search PDF text"
+          placeholder={handwriting ? 'Search handwriting and PDF text' : 'Search PDF text'}
+          aria-label={handwriting ? 'Search handwriting and PDF text' : 'Search PDF text'}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
@@ -115,21 +137,23 @@ export function SearchPanel({
           <Icon name="close" />
         </button>
       </div>
-      {pdfPages.length === 0 ? (
-        <p className="search-status">This notebook has no PDF pages to search.</p>
+      {pdfPages.length === 0 && !handwriting ? (
+        <p className="search-status">This notebook has no PDF pages to search. To search handwriting, turn on Recognise handwriting in Settings.</p>
       ) : (
         <>
           <p className="search-status" aria-live="polite">
             {summary}
             {summary && searching && ' · '}
             {searching && `Searching page ${progress.done} of ${progress.total}…`}
+            {reading && (summary || searching ? ' · ' : '') + `Reading handwriting (${handwriting.remaining} ${handwriting.remaining === 1 ? 'line' : 'lines'} to go)…`}
           </p>
           <ol className="search-results">
             {results.map((r, i) => (
               <Fragment key={i}>
                 {(i === 0 || results[i - 1].pageIndex !== r.pageIndex) && <li className="search-page">Page {r.pageIndex + 1}</li>}
                 <li>
-                  <button className={i === active ? 'active' : ''} onClick={() => show(i)}>
+                  <button className={i === active ? 'active' : ''} onClick={() => show(i)} title={r.ink ? 'In handwriting' : 'In PDF text'}>
+                    {r.ink && <span className="search-kind">✎ </span>}
                     {r.match.snippet.slice(0, r.match.start)}
                     <mark>{r.match.snippet.slice(r.match.start, r.match.end)}</mark>
                     {r.match.snippet.slice(r.match.end)}

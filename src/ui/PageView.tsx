@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import {
   pagePaper,
   pageSize,
@@ -30,6 +30,7 @@ import { isScribble, scribbledStrokes } from '../core/scribble';
 import { inkKind, type InkKind } from '../core/contentKinds';
 import { CropOverlay } from './CropOverlay';
 import { SelectionMenu, type MenuAction } from './SelectionMenu';
+import { align as alignInk, insertSpace, minReflowWidth, moveOps, movedStrokes, reflow, smartInkLayout, straighten, type Align, type InkMove } from '../core/smartInk';
 import type { RichEditorHandle } from './RichTextEditor';
 import { itemBlocks, richPatch } from '../core/richText';
 import { ShapeStyleRow } from './ShapeStyle';
@@ -43,7 +44,7 @@ import { snapMove, snapTargets, type SnapGuide, type SnapTargets } from '../core
 import { arrangeSelectionOps, lockSelectionOps, type Arrange } from '../core/arrange';
 import { findLayer, visibleContent, workingContent } from '../core/layers';
 import { lassoAllowsItem, lassoPolygon, selectWithLasso, type LassoKind, type LassoShape } from '../core/lasso';
-import { pointsLength, strokeHitsCircle, type Vec } from '../core/geometry';
+import { pointsLength, strokeHitsCircle, unionBounds, type Vec } from '../core/geometry';
 import { edgeNear, mapEdge, projectToEdge, type Edge } from '../core/ruler';
 import { newInkStroke, pressureOf, timeStamp } from './ink';
 import { playbackState, seekTimeFor, stampShape, strokeAtForSeek } from '../core/audio';
@@ -314,6 +315,9 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   const visibleRef = useRef(false);
   // Dragging a selected line's end or bend handle.
   const [lineEdit, setLineEdit] = useState<{ pointerId: number; handle: 0 | 1 | 'bend'; item: LineItem; preview: LineItem } | null>(null);
+  // Smart Ink: dragging a side handle to rewrap selected handwriting, and the insert-space mode.
+  const [reflowing, setReflowing] = useState<{ pointerId: number; side: 'w' | 'e'; from: { left: number; right: number }; left: number; right: number; moves: InkMove[] } | null>(null);
+  const [spacing, setSpacing] = useState(false);
 
   const dpr = Math.min(window.devicePixelRatio || 1, 3);
   const scale = zoom;
@@ -1168,6 +1172,83 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     }
   };
 
+  // --- Smart Ink: rewrap, insert space, straighten and align selected handwriting ---------------
+  // Only a selection of nothing but writing (every stroke on a line of words) can be rearranged.
+  const inkLayout = useMemo(
+    () => (selected && !selected.itemIds.length && selected.strokeIds.length && !readOnly ? smartInkLayout(selectedStrokes(page, selected)) : null),
+    [page, selected, readOnly],
+  );
+  const inkEdges = () => ({ left: Math.min(...inkLayout!.lines.map((l) => l.box.minX)), right: Math.max(...inkLayout!.lines.map((l) => l.box.maxX)) });
+
+  /** Draw the selected strokes moved (in place, on their own layer), or as they are when `moves` is null. */
+  const previewInk = (moves: InkMove[] | null) => {
+    replaced.current = moves ? new Map(movedStrokes(selStrokes, moves).map((s) => [s.id, [s]])) : null;
+    renderBase();
+  };
+
+  const commitInk = (moves: InkMove[]) => {
+    const ops = moveOps(page, moves);
+    replaced.current = null;
+    if (ops.length) store.dispatch(ops);
+    else renderBase();
+  };
+
+  const onReflowDown = (side: 'w' | 'e') => (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!inkLayout) return;
+    e.stopPropagation();
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const from = inkEdges();
+    setReflowing({ pointerId: e.pointerId, side, from, ...from, moves: [] });
+  };
+  const onReflowMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!reflowing || e.pointerId !== reflowing.pointerId || !inkLayout) return;
+    const x = pagePoint(e).x;
+    const min = minReflowWidth(inkLayout.paragraphs);
+    let { left, right } = reflowing.from;
+    if (reflowing.side === 'e') right = Math.max(left + min, Math.min(size.w, x));
+    else left = Math.min(right - min, Math.max(0, x));
+    const moves = reflow(inkLayout.paragraphs, left, right - left);
+    setReflowing({ ...reflowing, left, right, moves });
+    previewInk(moves);
+  };
+  const onReflowUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!reflowing || e.pointerId !== reflowing.pointerId) return;
+    setReflowing(null);
+    const changed = Math.abs(reflowing.left - reflowing.from.left) > 1 || Math.abs(reflowing.right - reflowing.from.right) > 1;
+    commitInk(changed ? reflowing.moves : []);
+  };
+
+  const straightenSelection = () => inkLayout && commitInk(straighten(inkLayout.lines));
+  const alignSelection = (how: Align) => {
+    if (!inkLayout) return;
+    const { left, right } = inkEdges();
+    commitInk(alignInk(inkLayout.lines, how, left, right));
+  };
+  /** Insert space mode: a tap opens a gap before the next word, pushing the rest of the line along. */
+  const insertSpaceAt = (pt: Vec) => {
+    if (!inkLayout) return;
+    const { left, right } = inkEdges();
+    // A single line may grow to the page edge; several lines keep their width.
+    const edge = inkLayout.lines.length === 1 ? Math.max(right, size.w - 24) : right;
+    const letters = inkLayout.lines.map((l) => l.letter).sort((a, b) => a - b);
+    const moves = insertSpace(inkLayout.paragraphs, pt, 1.5 * letters[letters.length >> 1], left, edge);
+    if (moves?.length) commitInk(moves);
+  };
+
+  // A new selection (or none) ends insert-space mode and drops a rewrap in progress.
+  useEffect(() => {
+    setSpacing(false);
+    setReflowing((r) => {
+      if (r) {
+        replaced.current = null;
+        renderBase();
+      }
+      return null;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
+
   // If the selection goes away mid-gesture (Esc, undo, a tool switch), its handles unmount before
   // pointer-up. Drop the preview and show the strokes again; nothing is committed.
   const gestureSelection = useRef(selected);
@@ -1190,6 +1271,10 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
   const onSelDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.stopPropagation();
     e.preventDefault();
+    if (spacing) {
+      insertSpaceAt(pagePoint(e));
+      return;
+    }
     e.currentTarget.setPointerCapture(e.pointerId);
     hidden.current = new Set(selected?.strokeIds ?? []);
     renderBase();
@@ -1293,6 +1378,15 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     if (onEditLink) moreActions.push({ label: soleItem?.kind === 'link' ? 'Edit link' : 'Add link…', onClick: () => onEditLink(selected, soleItem?.kind === 'link' ? soleItem : null) });
     if (onAddToOutline) moreActions.push({ label: 'Add to outline', onClick: () => onAddToOutline(selected) });
     if (onSaveElement) moreActions.push({ label: 'Save as element', onClick: () => onSaveElement(selected) });
+  }
+  if (inkLayout) {
+    moreActions.unshift(
+      { label: 'Insert space', onClick: () => setSpacing(true), title: 'Tap between words to make room' },
+      { label: 'Straighten', onClick: straightenSelection, title: 'Level sloping lines' },
+      { label: 'Align left', onClick: () => alignSelection('left') },
+      { label: 'Align centre', onClick: () => alignSelection('centre') },
+      { label: 'Align right', onClick: () => alignSelection('right') },
+    );
   }
 
   const styleRow =
@@ -1493,11 +1587,17 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
       {selBounds && (
         <>
           <div
-            className="selection-box"
+            className={`selection-box ${spacing ? 'spacing' : ''}`}
             data-no-gesture
             style={(() => {
-              // Moving and scaling show the transformed box; rotating turns the original box.
-              const b = xform?.kind === 'scale' ? transformBounds(selBounds, xform.m) : selBounds;
+              // Moving and scaling show the transformed box; rotating turns the original box;
+              // rewrapping shows the new width over the rewrapped lines.
+              const rewrapped = reflowing && unionBounds(movedStrokes(selStrokes, reflowing.moves));
+              const b = rewrapped
+                ? { ...rewrapped, minX: reflowing.left, maxX: reflowing.right }
+                : xform?.kind === 'scale'
+                  ? transformBounds(selBounds, xform.m)
+                  : selBounds;
               const dx = drag?.dx ?? 0, dy = drag?.dy ?? 0;
               return {
                 left: (b.minX + dx) * scale - 6,
@@ -1523,7 +1623,22 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
                 onPointerCancel={onResizeUp}
               />
             )}
-            {(!soleItem || soleTurned) && !drag && (!xform || xform.kind === 'scale') &&
+            {inkLayout && !drag && !xform && !spacing &&
+              (['w', 'e'] as const).map((side) => (
+                <div
+                  key={side}
+                  className={`reflow-handle ${side}`}
+                  role="slider"
+                  aria-label={side === 'w' ? 'Rewrap from the left' : 'Rewrap from the right'}
+                  aria-valuenow={Math.round((reflowing?.right ?? selBounds.maxX) - (reflowing?.left ?? selBounds.minX))}
+                  title="Drag to rewrap the writing"
+                  onPointerDown={onReflowDown(side)}
+                  onPointerMove={onReflowMove}
+                  onPointerUp={onReflowUp}
+                  onPointerCancel={onReflowUp}
+                />
+              ))}
+            {(!soleItem || soleTurned) && !drag && !reflowing && !spacing && (!xform || xform.kind === 'scale') &&
               (['nw', 'ne', 'sw', 'se'] as const).map((c) => (
                 <div
                   key={c}
@@ -1535,7 +1650,7 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
                   onPointerCancel={onXformUp}
                 />
               ))}
-            {!drag && selected && (soleItem ? canRotate(soleItem) : true) && (!xform || xform.kind === 'rotate') && (
+            {!drag && !reflowing && !spacing && selected && (soleItem ? canRotate(soleItem) : true) && (!xform || xform.kind === 'rotate') && (
               <div
                 // A lone shape's rotate handle sits at its corner, clear of the quick-diagram dot above it.
                 className={`rotate-handle ${quickDots ? 'corner' : ''}`}
@@ -1586,7 +1701,18 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
               ))}
             </>
           )}
-          {!drag && !resize && !xform && !lineEdit && (
+          {!drag && !resize && !xform && !lineEdit && !reflowing && spacing && (
+            <SelectionMenu
+              key="spacing"
+              anchor={{ left: selBounds.minX * scale, top: selBounds.minY * scale, bottom: selBounds.maxY * scale }}
+              clearance={12}
+              pageW={cssW}
+            >
+              <span className="sel-hint">Tap between words to add space</span>
+              <button onClick={() => setSpacing(false)}>Done</button>
+            </SelectionMenu>
+          )}
+          {!drag && !resize && !xform && !lineEdit && !reflowing && !spacing && (
             <SelectionMenu
               key={selected ? `${selected.strokeIds.join()}|${selected.itemIds.join()}` : 'none'}
               anchor={{ left: selBounds.minX * scale, top: selBounds.minY * scale, bottom: selBounds.maxY * scale }}

@@ -3,7 +3,10 @@ import { blankPage, docKind, sizeFor, type Folder, type NotebookMeta, type Orien
 import { PAPER_STYLES } from '../render/page';
 import { TemplateGrid, type CustomTemplate } from './TemplateGrid';
 import { newId } from '../core/ids';
-import { createNotebook, deleteFolder, deleteNotebook, listFolders, listNotebooks, moveNotebook, putFolder, updateMeta } from '../storage/db';
+import { allHwrEntries, createNotebook, deleteFolder, deleteNotebook, listFolders, listNotebooks, moveNotebook, putFolder, updateMeta } from '../storage/db';
+import { matchSnippet } from '../core/handwriting';
+import type { PageMatch } from '../core/pdfSearch';
+import { indexNotebooks, useHandwritingEnabled } from '../hwr/indexer';
 import { childFolders, countInFolder, effectiveFolder } from '../core/folders';
 import { KIND_FILTERS, type KindFilter, NATURAL_DIR, normalizeLibraryPrefs, sortFolders, sortNotebooks, type LibraryPrefs, type SortKey } from '../core/librarySort';
 import { Breadcrumbs, FolderCard, FolderDialog, FolderPicker } from './Folders';
@@ -96,6 +99,9 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
   const { install } = usePwa();
   const [query, setQuery] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
+  const hwrOn = useHandwritingEnabled();
+  // Notebooks whose handwriting matches the search, with the first match.
+  const [inkHits, setInkHits] = useState<Map<string, PageMatch>>(new Map());
 
   const refresh = () =>
     // Wait for a notebook that was just closed to finish saving (and an empty quick note to go).
@@ -244,6 +250,41 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
     }
   };
 
+  // Read the handwriting of notebooks that aren't open, while the library is shown, so search finds
+  // them. Locked notebooks are left alone.
+  const toIndex = (items ?? []).filter((n) => n.trashedAt === null && !n.lock && docKind(n) !== 'text').map((n) => n.id).join();
+  useEffect(() => {
+    if (!hwrOn || !toIndex) return;
+    const ctl = new AbortController();
+    const timer = setTimeout(() => void indexNotebooks(toIndex.split(','), ctl.signal), 3000);
+    return () => {
+      clearTimeout(timer);
+      ctl.abort();
+    };
+  }, [hwrOn, toIndex]);
+
+  // Search handwriting as well as titles.
+  useEffect(() => {
+    const text = query.trim();
+    if (!hwrOn || !text) return setInkHits(new Map());
+    let live = true;
+    const timer = setTimeout(async () => {
+      const byDoc = new Map<string, string[]>();
+      for (const e of await allHwrEntries().catch(() => [])) byDoc.set(e.docId, [...(byDoc.get(e.docId) ?? []), e.text]);
+      const hits = new Map<string, PageMatch>();
+      for (const [docId, texts] of byDoc) {
+        const m = matchSnippet(texts, text);
+        if (m) hits.set(docId, m);
+      }
+      if (live) setInkHits(hits);
+    }, 250);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [hwrOn, query]);
+  const inkHit = (n: NotebookMeta) => (n.lock ? undefined : inkHits.get(n.id));
+
   // Browsing shows one folder's contents; searching looks through every folder.
   const q = query.trim().toLowerCase();
   const browsing = tab === 'all' && !q;
@@ -252,7 +293,7 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
     if (tab === 'favourites' && !n.favourite) return false;
     if (prefs.kind !== 'all' && docKind(n) !== prefs.kind) return false;
     if (browsing) return effectiveFolder(n, folderIds) === here;
-    return !q || n.title.toLowerCase().includes(q);
+    return !q || n.title.toLowerCase().includes(q) || !!inkHit(n);
   });
   const visible = sortNotebooks(matching, prefs.sort, prefs.dir);
   const shownFolders = sortFolders(
@@ -280,7 +321,7 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
           <button className="icon-btn" onClick={() => setSettings(storedSettings())} aria-label="Settings" title="Settings">
             <Icon name="settings" />
           </button>
-          <input className="search" placeholder="Search titles" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search notebooks" />
+          <input className="search" placeholder={hwrOn ? 'Search titles and handwriting' : 'Search titles'} value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search notebooks" />
           <button className="btn ghost" onClick={() => fileInput.current?.click()} disabled={importing} title="Import a J Notes notebook, a PDF, or images">
             {importing ? 'Importing…' : 'Import'}
           </button>
@@ -419,6 +460,13 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
                 <div className="card-title" title={n.title}>
                   {n.title}
                 </div>
+                {q && inkHit(n) && (
+                  <div className="card-ink" title="In handwriting">
+                    ✎ {inkHit(n)!.snippet.slice(0, inkHit(n)!.start)}
+                    <mark>{inkHit(n)!.snippet.slice(inkHit(n)!.start, inkHit(n)!.end)}</mark>
+                    {inkHit(n)!.snippet.slice(inkHit(n)!.end)}
+                  </div>
+                )}
                 <div className="card-sub">
                   {docKind(n) === 'whiteboard' ? 'Whiteboard' : docKind(n) === 'text' ? 'Document' : `${n.pageCount} ${n.pageCount === 1 ? 'page' : 'pages'}`} · {dateLabel(n)}
                 </div>

@@ -104,8 +104,9 @@ describe('folder storage', () => {
     resetDbForTests();
 
     const db = await openDb();
-    expect(db.version).toBe(5);
+    expect(db.version).toBe(6);
     expect([...db.objectStoreNames]).toContain('folders');
+    expect([...db.objectStoreNames]).toContain('hwr');
     expect((await listNotebooks()).map((n) => n.id)).toEqual(['old']);
     expect((await loadDocument('old')).doc.pages[0].template).toBe('ruled');
     expect((await listElements()).map((e) => e.id)).toEqual(['el']);

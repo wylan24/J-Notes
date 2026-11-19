@@ -43,9 +43,27 @@ function serviceWorker(): Plugin {
   };
 }
 
+/**
+ * Leaves out ONNX Runtime's own copy of its WASM (27 MB). Handwriting recognition fetches the
+ * runtime from jsDelivr when it is first turned on and keeps it in the browser cache
+ * (Transformers.js sets `wasmPaths`), so the bundled copy is never loaded. Left in, the service
+ * worker would precache it for everyone, and it is over Cloudflare Pages' 25 MiB file limit.
+ */
+function dropOrtWasm(): Plugin {
+  return {
+    name: 'jnotes-drop-ort-wasm',
+    apply: 'build',
+    generateBundle(_opts, bundle) {
+      for (const name of Object.keys(bundle)) if (/(^|\/)ort-wasm[^/]*\.wasm$/.test(name)) delete bundle[name];
+    },
+  };
+}
+
 export default defineConfig({
   // `npm run spike` serves over HTTPS (a self-signed certificate) for the handwriting spike.
-  plugins: [react(), serviceWorker(), hwrSpike(), ...(process.env.HWR_HTTPS ? [basicSsl()] : [])],
+  plugins: [react(), dropOrtWasm(), serviceWorker(), hwrSpike(), ...(process.env.HWR_HTTPS ? [basicSsl()] : [])],
+  // The handwriting worker loads its model code on demand, so it is built as a module (Safari 15+).
+  worker: { format: 'es' },
   build: {
     rollupOptions: {
       input: { main: 'index.html', sw: 'src/pwa/sw.ts' },

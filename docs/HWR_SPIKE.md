@@ -173,7 +173,12 @@ for convert-to-text with the result shown for checking before it replaces the in
    Cloudflare Pages can set the headers (a `_headers` file); GitHub Pages can't.
 3. **Where the model comes from.** Cloudflare Pages limits files to 25 MiB, and the decoder is 40.6 MB, so the model
    can't ship as part of the site as it stands. Options: load it from Hugging Face's CDN (free, but a third party and
-   it stalled occasionally here), split the file, or a free-tier object store (Cloudflare R2). Decide in 10.3.
+   it stalled occasionally here), split the file, or a free-tier object store (Cloudflare R2).
+   **Decided in 10.3:** the model comes from Hugging Face and ONNX Runtime's WASM from jsDelivr, the first time
+   recognition is turned on; Transformers.js keeps both in Cache Storage, so it works offline after. The build
+   leaves out ONNX Runtime's bundled 27 MB WASM (never loaded, and over the 25 MiB limit), so the site stays
+   small and every file fits. A load that makes no progress for 3 minutes is reported, with Try again in
+   Settings. Hosting the files ourselves (R2) remains the fix if the CDNs prove unreliable.
 4. **First download.** 70 MB took 5 minutes on the test network. Recognition must be opt-in or start in the
    background with visible progress, cache the model (the browser cache already worked here), and never block writing.
 5. **Lines, not pages.** These numbers are for one line at a time. Task 10.3 needs line segmentation (10.1) first, and

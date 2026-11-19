@@ -1,3 +1,4 @@
+import type { HwrEntry } from '../core/handwriting';
 import { normalizeDoc, type Folder, type NotebookDoc, type NotebookMeta, type Page } from '../core/model';
 import { planFolderDelete } from '../core/folders';
 import type { Session } from '../core/timer';
@@ -14,12 +15,14 @@ import { replay, type DocEvent } from '../core/ops';
  *  sessions   timer and stopwatch history (not tied to a notebook's lifetime)
  *  elements   saved selections shared by all notebooks, each with copies of its photos
  *  folders    library folders (nested by parentId); notebooks point at theirs with meta.folderId
+ *  hwr        recognised handwriting, key [docId, key]: the text of each line of ink, by a hash of
+ *             the ink (see core/handwriting), so search never runs the model twice on the same line
  *
  * Loading a notebook = latest snapshot + replay of events after its seq.
  */
 
 const DB_NAME = 'jnotes';
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 
 interface Snapshot {
   docId: string;
@@ -70,6 +73,8 @@ export function openDb(): Promise<IDBDatabase> {
       if (e.oldVersion < 4) db.createObjectStore('elements', { keyPath: 'id' });
       // v5: folders. Existing notebooks have no folderId and so stay at the top level.
       if (e.oldVersion < 5) db.createObjectStore('folders', { keyPath: 'id' });
+      // v6: recognised handwriting. Built up again in the background, so nothing to migrate.
+      if (e.oldVersion < 6) db.createObjectStore('hwr', { keyPath: ['docId', 'key'] });
     };
     r.onsuccess = () => resolve(r.result);
     r.onerror = () => reject(r.error);
@@ -189,11 +194,44 @@ export async function compact(docId: string, doc: NotebookDoc, seq: number): Pro
 
 export async function deleteNotebook(id: string): Promise<void> {
   const db = await openDb();
-  const tx = db.transaction(['meta', 'events', 'snapshots', 'blobs'], 'readwrite');
+  const tx = db.transaction(['meta', 'events', 'snapshots', 'blobs', 'hwr'], 'readwrite');
   tx.objectStore('meta').delete(id);
   tx.objectStore('snapshots').delete(id);
   tx.objectStore('blobs').delete(blobRange(id));
+  tx.objectStore('hwr').delete(blobRange(id));
   tx.objectStore('events').delete(IDBKeyRange.bound([id, 0], [id, Infinity]));
+  await done(tx);
+}
+
+// --- Recognised handwriting ----------------------------------------------------------
+
+/** Every recognised line of one notebook. */
+export async function hwrEntries(docId: string): Promise<HwrEntry[]> {
+  const db = await openDb();
+  return req(db.transaction('hwr').objectStore('hwr').getAll(blobRange(docId)) as IDBRequest<HwrEntry[]>);
+}
+
+/** Every recognised line in the library, for searching notebooks that aren't open. */
+export async function allHwrEntries(): Promise<HwrEntry[]> {
+  const db = await openDb();
+  return req(db.transaction('hwr').objectStore('hwr').getAll() as IDBRequest<HwrEntry[]>);
+}
+
+/** Store recognised lines, and forget lines (by key) that are no longer in the notebook. */
+export async function updateHwrEntries(docId: string, put: HwrEntry[], remove: string[] = []): Promise<void> {
+  const db = await openDb();
+  const tx = db.transaction('hwr', 'readwrite');
+  const store = tx.objectStore('hwr');
+  for (const e of put) store.put({ ...e, docId });
+  for (const key of remove) store.delete([docId, key]);
+  await done(tx);
+}
+
+/** Forget all recognised text (when recognition is turned off). */
+export async function clearHwrEntries(): Promise<void> {
+  const db = await openDb();
+  const tx = db.transaction('hwr', 'readwrite');
+  tx.objectStore('hwr').clear();
   await done(tx);
 }
 

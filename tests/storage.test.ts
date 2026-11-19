@@ -4,7 +4,7 @@ import type { NotebookMeta } from '../src/core/model';
 import { DocumentStore } from '../src/core/store';
 import { movePageOp, updatePageOp } from '../src/core/ops';
 import { toggleBookmarkOp } from '../src/core/pages';
-import { addSession, appendEvents, appendPage, deleteElement, listElements, renameElement, saveElement, clearSessions, compact, createNotebook, deleteNotebook, getBlob, getBlobs, listSessions, listNotebooks, loadDocument, openDb, putBlob, resetDbForTests } from '../src/storage/db';
+import { addSession, allHwrEntries, appendEvents, hwrEntries, updateHwrEntries, appendPage, deleteElement, listElements, renameElement, saveElement, clearSessions, compact, createNotebook, deleteNotebook, getBlob, getBlobs, listSessions, listNotebooks, loadDocument, openDb, putBlob, resetDbForTests } from '../src/storage/db';
 import { Persister } from '../src/storage/persister';
 
 const meta = (id: string): NotebookMeta => ({
@@ -212,3 +212,21 @@ describe('elements library', () => {
   });
 });
 
+
+describe('recognised handwriting store', () => {
+  it('keeps text per notebook, forgets removed lines, and goes with the notebook', async () => {
+    await createNotebook(meta('a'), { id: 'a', pages: [] });
+    await createNotebook(meta('b'), { id: 'b', pages: [] });
+    await updateHwrEntries('a', [
+      { docId: 'a', key: 'k1', pageId: 'p', text: 'buy milk' },
+      { docId: 'a', key: 'k2', pageId: 'p', text: 'call Sam' },
+    ]);
+    await updateHwrEntries('b', [{ docId: 'b', key: 'k1', pageId: 'q', text: 'other' }]);
+    expect((await hwrEntries('a')).map((e) => e.text).sort()).toEqual(['buy milk', 'call Sam']);
+    await updateHwrEntries('a', [], ['k2']);
+    expect((await hwrEntries('a')).map((e) => e.key)).toEqual(['k1']);
+    await deleteNotebook('a');
+    expect(await hwrEntries('a')).toEqual([]);
+    expect((await allHwrEntries()).map((e) => e.docId)).toEqual(['b']);
+  });
+});

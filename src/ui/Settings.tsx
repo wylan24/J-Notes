@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { forPlatform, SHORTCUT_GROUPS } from '../core/shortcuts';
 import { setTheme, useTheme, type Theme } from './theme';
 import { isIos, isStandalone, usePwa } from '../pwa/register';
 import type { EditorSettings, InkToolName } from './settingsStore';
+import { setHandwritingEnabled, useHandwritingEnabled } from '../hwr/indexer';
+import { onRecognizerStatus, recognizerStatus, startRecognizer, stop as stopRecognizer } from '../hwr/recognizer';
 
 const THEMES: { id: Theme; label: string }[] = [
   { id: 'system', label: 'System' },
@@ -73,6 +75,52 @@ function AppSection() {
           {isIos()
             ? 'To install J Notes, tap Share in Safari, then Add to Home Screen. It then works offline.'
             : "To install J Notes, use your browser's Install app option. Once loaded, it works offline either way."}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Handwriting recognition: off until chosen, since the model is a large download. Turning it on
+ * starts the download here, with its progress, so it isn't a surprise later.
+ */
+function HandwritingSection() {
+  const on = useHandwritingEnabled();
+  const status = useSyncExternalStore(onRecognizerStatus, recognizerStatus);
+  const mb = (n: number) => `${Math.round(n / 1e6)} MB`;
+  return (
+    <section>
+      <h3>Handwriting</h3>
+      <Toggle
+        label="Recognise handwriting"
+        hint="Makes your writing searchable, here and in the library. Reading happens on this device; the reading model is a one-time download of about 70 MB."
+        checked={on}
+        onChange={(v) => {
+          setHandwritingEnabled(v);
+          if (v) void startRecognizer().catch(() => {});
+          else stopRecognizer();
+        }}
+      />
+      {on && (
+        <p className="setting-hint" aria-live="polite">
+          {status.state === 'loading'
+            ? status.total
+              ? `Downloading the reading model: ${mb(status.loaded)} of ${mb(status.total)}…`
+              : 'Starting the reading model…'
+            : status.state === 'ready'
+              ? 'Ready. New writing is read a moment after you stop writing.'
+              : status.state === 'error'
+                ? status.message
+                : 'Writing is read in the background while a notebook is open.'}
+          {status.state === 'error' && (
+            <>
+              {' '}
+              <button type="button" className="btn sm ghost" onClick={() => void startRecognizer().catch(() => {})}>
+                Try again
+              </button>
+            </>
+          )}
         </p>
       )}
     </section>
@@ -158,6 +206,7 @@ export function SettingsDialog({ values, onChange, onClose, board }: Props) {
             />
           )}
         </section>
+        <HandwritingSection />
         <AppSection />
         <section>
           <h3>Storage</h3>

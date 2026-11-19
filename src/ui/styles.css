@@ -108,6 +108,8 @@ button:disabled { cursor: default; opacity: 0.35; }
 .spine { position: absolute; left: 0; top: 0; bottom: 0; width: 10px; z-index: 1; }
 .card-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card-sub { color: var(--muted); font-size: 12px; }
+.card-ink { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-ink mark { background: #ffe066; color: #1a1a1a; border-radius: 2px; padding: 0 1px; }
 .card-actions { display: flex; gap: 2px; margin-top: -4px; }
 .empty { text-align: center; padding: 80px 0; color: var(--muted); }
 .center-msg { height: 100%; display: grid; place-content: center; gap: 12px; text-align: center; color: var(--muted); }
@@ -210,6 +212,16 @@ button:disabled { cursor: default; opacity: 0.35; }
 .xform-handle.ne { right: -8px; top: -8px; cursor: nesw-resize; }
 .xform-handle.sw { left: -8px; bottom: -8px; cursor: nesw-resize; }
 .xform-handle.se { right: -8px; bottom: -8px; cursor: nwse-resize; }
+/* Smart Ink: side handles that rewrap selected handwriting to a new width. */
+.reflow-handle {
+  position: absolute; top: 50%; width: 8px; height: 28px; margin-top: -14px; border-radius: 4px;
+  background: var(--surface); border: 2px solid var(--accent); cursor: ew-resize; touch-action: none;
+}
+.reflow-handle::before { content: ''; position: absolute; inset: -12px; }
+.reflow-handle.w { left: -6px; }
+.reflow-handle.e { right: -6px; }
+.selection-box.spacing { cursor: text; border-style: solid; }
+.sel-hint { font-size: 13px; padding: 0 8px; opacity: 0.85; }
 .rotate-handle {
   position: absolute; left: 50%; top: -34px; width: 16px; height: 16px; margin-left: -8px; border-radius: 50%;
   background: var(--accent); cursor: grab; touch-action: none;
@@ -484,6 +496,7 @@ button:disabled { cursor: default; opacity: 0.35; }
 .search-results button:hover { background: var(--surface-2); }
 .search-results button.active { background: var(--accent-soft); }
 .search-results mark { background: #ffe066; color: inherit; border-radius: 2px; padding: 0 1px; }
+.search-kind { color: var(--muted); }
 .search-hit { position: absolute; pointer-events: none; background: rgba(255, 214, 0, 0.35); outline: 2px solid rgba(240, 180, 0, 0.9); border-radius: 3px; mix-blend-mode: multiply; }
 
 /* ---------- Export as PDF ---------- */

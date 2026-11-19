@@ -22,6 +22,12 @@ npm run build      # typecheck and production build in dist/
 - An eraser with three sizes, whole-stroke or partial erasing, and a "highlighter only" filter.
 - A laser pointer that leaves a fading trail and is never saved.
 - Lasso selection: move, resize, rotate (snapping to right angles), duplicate, recolor and delete. Tap an item with the lasso to select it and resize it with its handle.
+- Smart Ink: lasso some handwriting and drag the side handles to rewrap it to a new width, or use
+  Insert space, Straighten and Align from the selection's More menu. Words and lines are found from
+  the ink alone; no recognition needed.
+- Handwriting search (opt in under Settings → Handwriting): an on-device model reads each line in a
+  worker after you pause, and search finds it in the notebook (highlighting the words) and in the
+  library. The model is a one-time 70 MB download, then works offline.
 - A Shapes tool that turns rough lines, circles, ellipses, rectangles, triangles, polygons and arrows into clean shapes.
   Anything it doesn't recognise stays as drawn.
 - Hold to snap: with the pen, pause at the end of a stroke to snap it to a shape, then keep moving to adjust it.
@@ -99,5 +105,5 @@ The toolbar plan, phase by phase, is in [docs/TOOLBAR_PLAN.md](docs/TOOLBAR_PLAN
 1. **Sync and collaboration.** Ship the event log to a server, or swap the reducer for a CRDT such as Automerge, as Goodnotes does.
 2. **GPU ink.** Move rendering to WebGL2 or OffscreenCanvas in a worker, with tile caching for very dense pages.
 3. **PDF import and annotation** with pdf.js; Goodnotes uses PDFium.
-4. **Handwriting search and convert-to-text** with an on-device ONNX model in a worker.
+4. **Convert handwriting to text and spellcheck**, on the recognition that search already uses.
 5. Page reordering, and an outline/thumbnail sidebar.

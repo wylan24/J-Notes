@@ -33,6 +33,7 @@ import { countTape, removeAllTapeOps, TAPE_COLORS, toggleRevealed } from '../cor
 import { OutlinePanel } from './OutlinePanel';
 import { addOutlineEntry } from '../core/outline';
 import { SearchPanel, type SearchHit } from './SearchPanel';
+import { useHandwritingIndex } from '../hwr/indexer';
 import { PdfExportDialog } from './PdfExportDialog';
 import { LayerExportDialog, LayersPanel, layerNotice } from './LayersPanel';
 import { findLayer, layerNames, pageLayers, visibleContent, withLayers, workingContent } from '../core/layers';
@@ -289,6 +290,8 @@ function EditorInner({
   const [selection, setSelection] = useState<Selection | null>(null);
   const [status, setStatus] = useState<SaveStatus>('saved');
   const [currentPage, setCurrentPage] = useState(0);
+  // Recognised handwriting, read in the background while recognition is on (Settings).
+  const handwriting = useHandwritingIndex(initialMeta.id, store, currentPage);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const gesture = useRef<GestureState>({ touches: new Map(), active: false });
   const zoomRef = useRef(zoom);
@@ -1445,7 +1448,7 @@ function EditorInner({
               else setSearchOpen(true);
             }}
             aria-pressed={searchOpen}
-            aria-label="Search PDF text"
+            aria-label={handwriting ? 'Search handwriting and PDF text' : 'Search PDF text'}
             title="Search (⌘F)"
           >
             <Icon name="search" />
@@ -1973,7 +1976,7 @@ function EditorInner({
           onExport={exportAsPdf}
         />
       )}
-      {searchOpen && <SearchPanel doc={doc} onJump={showSearchHit} onClose={closeSearch} />}
+      {searchOpen && <SearchPanel doc={doc} handwriting={handwriting} onJump={showSearchHit} onClose={closeSearch} />}
       {layersOpen && layersPage && (
         <LayersPanel
           page={layersPage}
