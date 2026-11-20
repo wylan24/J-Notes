@@ -7,6 +7,7 @@ import { setHandwritingEnabled, useHandwritingEnabled } from '../hwr/indexer';
 import { onRecognizerStatus, recognizerStatus, startRecognizer, stop as stopRecognizer } from '../hwr/recognizer';
 import { setSpellcheckEnabled, useSpellcheckEnabled } from '../hwr/spellcheck';
 import { clientId, dismissSignInError, signIn, signOut, useAccount } from '../auth/google';
+import { syncNow, useSyncStatus, type SyncStatus } from '../sync';
 
 const THEMES: { id: Theme; label: string }[] = [
   { id: 'system', label: 'System' },
@@ -53,9 +54,49 @@ function Choice<T extends string>({ label, options, value, onChange }: { label: 
   );
 }
 
+const ago = (t: number) => {
+  const s = Math.round((Date.now() - t) / 1000);
+  return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : `at ${new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+};
+
+/** How syncing is going, and what to do about it. */
+function SyncLine({ status }: { status: SyncStatus }) {
+  const [message, action] = ((): [string, { label: string; run: () => void } | null] => {
+    switch (status.state) {
+      case 'syncing':
+        return ['Syncing with Google Drive…', null];
+      case 'offline':
+        return ["Offline. Changes sync when you're back online.", null];
+      case 'reconnect':
+        return ['Sync is paused: Google Drive access lasts an hour. Reconnect to carry on.', { label: 'Reconnect', run: signIn }];
+      case 'no-drive':
+        return ["J Notes wasn't allowed to use its Google Drive folder, so it can't sync. Sign in again and allow it.", { label: 'Sign in again', run: signIn }];
+      case 'error':
+        return [`Couldn't sync. ${status.error ?? ''}`, { label: 'Try again', run: () => syncNow() }];
+      case 'idle':
+        return [status.lastSynced ? `Notebooks synced with your Google Drive ${ago(status.lastSynced)}.` : 'Notebooks sync with your Google Drive.', { label: 'Sync now', run: () => syncNow() }];
+      default:
+        return ['Notebooks sync with your Google Drive.', { label: 'Sync now', run: () => syncNow() }];
+    }
+  })();
+  return (
+    <div className="setting-row">
+      <span className={`setting-hint${status.state === 'error' || status.state === 'no-drive' ? ' danger-text' : ''}`} role="status">
+        {message}
+      </span>
+      {action && (
+        <button type="button" className="btn sm" onClick={action.run}>
+          {action.label}
+        </button>
+      )}
+    </div>
+  );
+}
+
 /** Signing in with Google: optional, and it never changes what is on this device. */
 function AccountSection() {
   const { account, error } = useAccount();
+  const sync = useSyncStatus();
   const [pictureFailed, setPictureFailed] = useState(false);
   const [confirming, setConfirming] = useState(false);
   return (
@@ -107,17 +148,13 @@ function AccountSection() {
               </button>
             )}
           </div>
-          <p className="setting-hint">
-            {confirming
-              ? 'Your notebooks stay on this device after you sign out.'
-              : 'Signed in with Google. Syncing notebooks to your Google Drive is coming next.'}
-          </p>
+          {confirming ? <p className="setting-hint">Your notebooks stay on this device after you sign out.</p> : <SyncLine status={sync} />}
         </>
       ) : clientId ? (
         <div className="setting-row">
           <span>
             <span className="setting-label">Sign in with Google</span>
-            <span className="setting-hint">Optional. J Notes works fully without an account; signing in will let it sync through your own Google Drive.</span>
+            <span className="setting-hint">Optional. J Notes works fully without an account; signed in, your notebooks sync between devices through your own Google Drive.</span>
           </span>
           <button type="button" className="btn sm primary" onClick={signIn} disabled={!navigator.onLine}>
             Sign in

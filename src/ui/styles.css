@@ -811,6 +811,9 @@ button:disabled { cursor: default; opacity: 0.35; }
 .account > span:last-child { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
 .account-avatar { width: 36px; height: 36px; flex: none; border-radius: 50%; object-fit: cover; display: inline-grid; place-items: center; background: var(--accent); color: #fff; font-weight: 600; }
 .account-actions { display: flex; gap: 6px; flex: none; }
+.sync-chip { font-size: 13px; color: var(--muted); white-space: nowrap; }
+button.sync-chip { color: var(--accent); }
+button.sync-chip.warn { color: var(--danger); }
 .setting-range { display: flex; align-items: center; gap: 8px; }
 .setting-range output { width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
 .switch {

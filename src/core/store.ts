@@ -62,6 +62,17 @@ export class DocumentStore {
     this.eventListeners.forEach((l) => l(events));
   }
 
+  /**
+   * Swap in the notebook as changed elsewhere (by sync). Not an edit: nothing is logged and undo is
+   * kept, since ops find what they change by id.
+   */
+  replaceDoc(doc: NotebookDoc): void {
+    if (doc === this.doc) return;
+    this.doc = doc;
+    this.version++;
+    this.listeners.forEach((l) => l());
+  }
+
   /** The layer tools act on and new content goes on, for page `pageId`. */
   activeLayer(pageId: string): string {
     const page = this.doc.pages.find((p) => p.id === pageId);

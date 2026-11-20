@@ -3,7 +3,8 @@
 //
 // What is kept where:
 // - who is signed in (no access) — localStorage, so it survives reloads and restarts;
-// - the hour-long Drive access token — sessionStorage, so it never outlives the tab;
+// - the Drive access token — localStorage too, so reopening the app within the hour needs no
+//   trip to Google; it expires within the hour and only reaches the app's own Drive folder;
 // - a sign-in in progress (state and nonce) — localStorage, for the trip to Google and back.
 import { useSyncExternalStore } from 'react';
 import {
@@ -48,7 +49,6 @@ function write(storage: () => Storage, key: string, value: unknown): void {
   }
 }
 const local = () => localStorage;
-const session = () => sessionStorage;
 
 let state: AccountState = { account: null, error: null };
 let token: AccessToken | null = null;
@@ -59,21 +59,27 @@ function load(): void {
   if (loaded) return;
   loaded = true;
   state = { account: normaliseAccount(read(local, ACCOUNT_KEY)), error: null };
-  token = state.account ? normaliseToken(read(session, TOKEN_KEY)) : null;
+  token = state.account ? normaliseToken(read(local, TOKEN_KEY)) : null;
 }
 function set(patch: Partial<AccountState>): void {
   state = { ...state, ...patch };
   listeners.forEach((l) => l());
 }
 
+/** Hear about sign-in, sign-out and sign-in errors. */
+export function onAccountChange(fn: () => void): () => void {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
 export function useAccount(): AccountState {
-  return useSyncExternalStore(
-    (fn) => {
-      listeners.add(fn);
-      return () => listeners.delete(fn);
-    },
-    () => (load(), state),
-  );
+  return useSyncExternalStore(onAccountChange, () => (load(), state));
+}
+
+/** The signed-in account, outside React. */
+export function currentAccount(): Account | null {
+  load();
+  return state.account;
 }
 
 /** A Drive access token that is good for at least another minute, or null (sync renews it). */
@@ -87,7 +93,7 @@ const randomId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), (b
 /** Where Google sends the person back: the app's own address (registered with the OAuth client). */
 const redirectUri = () => `${location.origin}${import.meta.env.BASE_URL}`;
 
-/** Go to Google to sign in. The page leaves; edits are already saved by then. */
+/** Go to Google to sign in (or to renew Drive access). The page leaves; edits are already saved by then. */
 export function signIn(): void {
   if (!clientId) return;
   const pending = { state: randomId(), nonce: randomId(), returnTo: location.hash.startsWith('#/') ? location.hash : '#/', startedAt: Date.now() };
@@ -111,7 +117,7 @@ export function completeSignIn(): void {
   }
   token = result.token;
   write(local, ACCOUNT_KEY, result.account);
-  write(session, TOKEN_KEY, result.token);
+  write(local, TOKEN_KEY, result.token);
   set({ account: result.account, error: null });
 }
 
@@ -129,7 +135,7 @@ export function signOut(): void {
   }
   token = null;
   write(local, ACCOUNT_KEY, null);
-  write(session, TOKEN_KEY, null);
+  write(local, TOKEN_KEY, null);
   set({ account: null, error: null });
 }
 

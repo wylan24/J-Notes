@@ -19,7 +19,7 @@ export interface Account {
   picture?: string;
 }
 
-/** Access to Drive. Lasts an hour; never kept beyond the browser tab. */
+/** Access to Drive. Lasts an hour. */
 export interface AccessToken {
   token: string;
   /** ms since the epoch. */

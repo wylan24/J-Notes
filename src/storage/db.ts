@@ -5,6 +5,7 @@ import { planFolderDelete } from '../core/folders';
 import type { Session } from '../core/timer';
 import type { SavedElement } from '../core/elements';
 import { replay, type DocEvent } from '../core/ops';
+import type { SyncRecord } from '../sync/engine';
 
 /**
  * Local-first, event-sourced storage in IndexedDB.
@@ -18,12 +19,15 @@ import { replay, type DocEvent } from '../core/ops';
  *  folders    library folders (nested by parentId); notebooks point at theirs with meta.folderId
  *  hwr        recognised handwriting, key [docId, key]: the text of each line of ink, by a hash of
  *             the ink (see core/handwriting), so search never runs the model twice on the same line
+ *  syncDocs   Drive sync per notebook (see sync/engine): how far this device's edits are uploaded,
+ *             or a note that a synced notebook was deleted here
+ *  syncFiles  files downloaded from Drive, by name and version, so none is downloaded twice
  *
  * Loading a notebook = latest snapshot + replay of events after its seq.
  */
 
 const DB_NAME = 'jnotes';
-const DB_VERSION = 6;
+const DB_VERSION = 7;
 
 interface Snapshot {
   docId: string;
@@ -76,6 +80,11 @@ export function openDb(): Promise<IDBDatabase> {
       if (e.oldVersion < 5) db.createObjectStore('folders', { keyPath: 'id' });
       // v6: recognised handwriting. Built up again in the background, so nothing to migrate.
       if (e.oldVersion < 6) db.createObjectStore('hwr', { keyPath: ['docId', 'key'] });
+      // v7: Drive sync. Nothing to migrate: a notebook starts syncing on the first sync after sign-in.
+      if (e.oldVersion < 7) {
+        db.createObjectStore('syncDocs', { keyPath: 'docId' });
+        db.createObjectStore('syncFiles', { keyPath: 'name' });
+      }
     };
     r.onsuccess = () => resolve(r.result);
     r.onerror = () => reject(r.error);
@@ -103,12 +112,15 @@ export async function getMeta(id: string): Promise<NotebookMeta | undefined> {
   return req(db.transaction('meta').objectStore('meta').get(id) as IDBRequest<NotebookMeta | undefined>);
 }
 
-/** Create a notebook, with any blobs its items refer to (from an import), in one transaction. */
-export async function createNotebook(meta: NotebookMeta, doc: NotebookDoc, blobs: StoredBlob[] = []): Promise<void> {
+/**
+ * Create a notebook, with any blobs its items refer to (from an import), in one transaction.
+ * `seq`: the last edit already included (a notebook from Drive goes on numbering after it).
+ */
+export async function createNotebook(meta: NotebookMeta, doc: NotebookDoc, blobs: StoredBlob[] = [], seq = 0): Promise<void> {
   const db = await openDb();
   const tx = db.transaction(['meta', 'snapshots', 'blobs'], 'readwrite');
   tx.objectStore('meta').put(meta);
-  tx.objectStore('snapshots').put({ docId: doc.id, seq: 0, doc } satisfies Snapshot);
+  tx.objectStore('snapshots').put({ docId: doc.id, seq, doc } satisfies Snapshot);
   for (const b of blobs) tx.objectStore('blobs').put({ ...b, docId: doc.id } satisfies StoredBlob);
   await done(tx);
 }
@@ -202,18 +214,27 @@ export async function appendCards(docId: string, cards: StudyCard[], blobs: Pick
   await done(tx);
 }
 
-/** Write a snapshot at `seq` and drop the events it subsumes. */
+/**
+ * Write a snapshot at `seq` and drop the events it subsumes, except those not yet uploaded to
+ * Drive: sync still needs to send them.
+ */
 export async function compact(docId: string, doc: NotebookDoc, seq: number): Promise<void> {
   const db = await openDb();
-  const tx = db.transaction(['events', 'snapshots'], 'readwrite');
+  const tx = db.transaction(['events', 'snapshots', 'syncDocs'], 'readwrite');
   tx.objectStore('snapshots').put({ docId, seq, doc } satisfies Snapshot);
-  tx.objectStore('events').delete(IDBKeyRange.bound([docId, 0], [docId, seq]));
+  const rec = await req(tx.objectStore('syncDocs').get(docId) as IDBRequest<SyncDoc | undefined>);
+  const drop = rec && 'uploaded' in rec ? Math.min(seq, rec.uploaded) : seq;
+  tx.objectStore('events').delete(IDBKeyRange.bound([docId, 0], [docId, drop]));
   await done(tx);
 }
 
 export async function deleteNotebook(id: string): Promise<void> {
   const db = await openDb();
-  const tx = db.transaction(['meta', 'events', 'snapshots', 'blobs', 'hwr'], 'readwrite');
+  const tx = db.transaction(['meta', 'events', 'snapshots', 'blobs', 'hwr', 'syncDocs'], 'readwrite');
+  // A notebook in Drive is deleted there too at the next sync, so other devices delete it as well.
+  const syncDocs = tx.objectStore('syncDocs');
+  const rec = await req(syncDocs.get(id) as IDBRequest<SyncDoc | undefined>);
+  if (rec) syncDocs.put({ docId: id, deleted: true } satisfies SyncDoc);
   tx.objectStore('meta').delete(id);
   tx.objectStore('snapshots').delete(id);
   tx.objectStore('blobs').delete(blobRange(id));
@@ -369,4 +390,88 @@ export async function deleteFolder(id: string): Promise<number> {
   }
   await done(tx);
   return plan.trash.length;
+}
+
+// --- Drive sync ------------------------------------------------------------------------
+
+/** A notebook's sync record, or a note that a synced notebook was deleted here. */
+export type SyncDoc = SyncRecord | { docId: string; deleted: true };
+
+export async function getSyncDoc(docId: string): Promise<SyncDoc | undefined> {
+  const db = await openDb();
+  return req(db.transaction('syncDocs').objectStore('syncDocs').get(docId) as IDBRequest<SyncDoc | undefined>);
+}
+
+export async function putSyncDoc(rec: SyncDoc): Promise<void> {
+  const db = await openDb();
+  const tx = db.transaction('syncDocs', 'readwrite');
+  tx.objectStore('syncDocs').put(rec);
+  await done(tx);
+}
+
+export async function deletedSyncDocs(): Promise<string[]> {
+  const db = await openDb();
+  const all = await req(db.transaction('syncDocs').objectStore('syncDocs').getAll() as IDBRequest<SyncDoc[]>);
+  return all.filter((r) => 'deleted' in r).map((r) => r.docId);
+}
+
+export async function forgetSyncDocs(ids: string[]): Promise<void> {
+  const db = await openDb();
+  const tx = db.transaction('syncDocs', 'readwrite');
+  for (const id of ids) tx.objectStore('syncDocs').delete(id);
+  await done(tx);
+}
+
+export async function getSyncFile<T>(name: string, version: string): Promise<T | undefined> {
+  const db = await openDb();
+  const f = await req(db.transaction('syncFiles').objectStore('syncFiles').get(name) as IDBRequest<{ name: string; version: string; value: T } | undefined>);
+  return f && f.version === version ? f.value : undefined;
+}
+
+export async function putSyncFile(name: string, version: string, value: unknown): Promise<void> {
+  const db = await openDb();
+  const tx = db.transaction('syncFiles', 'readwrite');
+  tx.objectStore('syncFiles').put({ name, version, value });
+  await done(tx);
+}
+
+/** Forget everything about syncing (on sign-out): notebooks stay, and compact as before. */
+export async function clearSync(): Promise<void> {
+  const db = await openDb();
+  const tx = db.transaction(['syncDocs', 'syncFiles'], 'readwrite');
+  tx.objectStore('syncDocs').clear();
+  tx.objectStore('syncFiles').clear();
+  await done(tx);
+}
+
+/** This device's logged edits to a notebook after `seq`, oldest first. */
+export async function eventsAfter(docId: string, seq: number): Promise<DocEvent[]> {
+  const db = await openDb();
+  return req(db.transaction('events').objectStore('events').getAll(eventRange(docId, seq)) as IDBRequest<DocEvent[]>);
+}
+
+export async function blobIds(docId: string): Promise<string[]> {
+  const db = await openDb();
+  const keys = await req(db.transaction('blobs').objectStore('blobs').getAllKeys(blobRange(docId)));
+  return keys.map((k) => (k as [string, string])[1]);
+}
+
+/**
+ * A notebook that isn't open becomes `merged` (worked out from Drive) plus this device's own edits
+ * after `uploaded`, which are kept until they are uploaded too.
+ */
+export async function applyMerged(docId: string, merged: NotebookDoc, uploaded: number): Promise<void> {
+  const db = await openDb();
+  const tx = db.transaction(['events', 'snapshots', 'meta'], 'readwrite');
+  const snap = await req(tx.objectStore('snapshots').get(docId) as IDBRequest<Snapshot | undefined>);
+  if (!snap) return;
+  const later = await req(tx.objectStore('events').getAll(eventRange(docId, uploaded)) as IDBRequest<DocEvent[]>);
+  const doc = replay(normalizeDoc(merged), later);
+  const seq = Math.max(snap.seq, later.length ? later[later.length - 1].seq : 0);
+  tx.objectStore('snapshots').put({ docId, seq, doc } satisfies Snapshot);
+  tx.objectStore('events').delete(IDBKeyRange.bound([docId, 0], [docId, Math.min(seq, uploaded)]));
+  const metaStore = tx.objectStore('meta');
+  const cur = await req(metaStore.get(docId) as IDBRequest<NotebookMeta | undefined>);
+  if (cur) metaStore.put({ ...cur, pageCount: doc.pages.length, ...(doc.cards ? { deck: deckSummary(doc.cards) } : {}) });
+  await done(tx);
 }
