@@ -814,6 +814,10 @@ button:disabled { cursor: default; opacity: 0.35; }
 .sync-chip { font-size: 13px; color: var(--muted); white-space: nowrap; }
 button.sync-chip { color: var(--accent); }
 button.sync-chip.warn { color: var(--danger); }
+.sync-progress { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 12px 0 0; padding: 10px 14px; border-radius: 10px; background: var(--accent-soft); font-size: 14px; }
+.sync-progress progress { flex: 1 1 160px; min-width: 120px; height: 8px; accent-color: var(--accent); }
+.sign-out { display: flex; flex-direction: column; gap: 6px; padding: 4px 0 8px; }
+.sign-out .account-actions { justify-content: flex-end; flex-wrap: wrap; }
 .setting-range { display: flex; align-items: center; gap: 8px; }
 .setting-range output { width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
 .switch {

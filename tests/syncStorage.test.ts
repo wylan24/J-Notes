@@ -5,9 +5,9 @@ import type { DocOp } from '../src/core/ops';
 import { DocumentStore } from '../src/core/store';
 import { compact, createNotebook, deletedSyncDocs, deleteNotebook, eventsAfter, loadDocument, openDb, putSyncDoc, resetDbForTests, applyMerged, appendEvents } from '../src/storage/db';
 import { Persister } from '../src/storage/persister';
-import { localLibrary, localNotebooks } from '../src/sync/local';
+import { localLibrary, localNotebooks, removeSyncedCopies } from '../src/sync/local';
 import { syncLibrary } from '../src/sync/library';
-import { getMeta, listFolders, putFolder, updateMeta } from '../src/storage/db';
+import { getMeta, listElements, listFolders, listNotebooks, putFolder, saveElement, updateMeta } from '../src/storage/db';
 import { syncNotebooks } from '../src/sync/engine';
 import { Device, FakeDrive, Library, stroke } from './syncFakes';
 
@@ -153,6 +153,41 @@ describe('sync storage', () => {
     expect(await listFolders()).toEqual([]);
     expect(store.get('jnotes.snap')).toBe('false');
     expect(await sync()).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
+  it('signing out and removing deletes only what is safely in Drive, and it all comes back', async () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v), removeItem: (k: string) => store.delete(k) });
+    const drive = new FakeDrive();
+    const sync = async () => {
+      await syncNotebooks({ drive, local: localNotebooks, device: 'here' });
+      await syncLibrary({ drive, local: localLibrary, device: 'here' });
+    };
+    for (const id of ['safe', 'edited', 'quick', 'open']) await createNotebook({ ...meta(id), ...(id === 'quick' ? { quicknote: true as const } : {}) }, blank(id));
+    await putFolder({ id: 'f1', name: 'School', color: '#123456', parentId: null, createdAt: 1 });
+    await updateMeta('safe', { folderId: 'f1', title: 'Safe' });
+    await saveElement({ id: 'e1', name: 'Star', createdAt: 1, thumbnail: '', strokes: [], items: [], blobs: [] } as never);
+    await sync();
+    await logEdits('edited', 1, 'not-uploaded');
+    const opened = new Persister(new DocumentStore(blank('open'), 0), 0);
+
+    const { removed, kept } = await removeSyncedCopies();
+    expect({ removed, kept }).toEqual({ removed: 1, kept: 3 });
+    expect((await listNotebooks()).map((m) => m.id).sort()).toEqual(['edited', 'open', 'quick']);
+    expect(await listElements()).toEqual([]);
+    // Folders stay while notebooks are kept; nothing is deleted from Drive.
+    expect((await listFolders()).map((f) => f.id)).toEqual(['f1']);
+    expect(drive.names().some((n) => n.endsWith('.deleted'))).toBe(false);
+    await opened.dispose();
+
+    // Signing in again brings it back, title and folder included.
+    await sync();
+    expect((await getMeta('safe'))).toMatchObject({ title: 'Safe', folderId: 'f1' });
+    expect(ids((await loadDocument('safe')).doc)).toEqual([]);
+    expect((await listElements()).map((e) => e.id)).toEqual(['e1']);
+    // The edit kept here goes up too, though what sync knew was forgotten.
+    expect(drive.names()).toContain('n.edited.log.here.1-1.json');
     vi.unstubAllGlobals();
   });
 });

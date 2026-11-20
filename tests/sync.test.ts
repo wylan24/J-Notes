@@ -11,6 +11,7 @@ import {
 } from '../src/core/sync';
 import type { NotebookDoc } from '../src/core/model';
 import { DriveAuthError } from '../src/sync/drive';
+import { syncNotebooks } from '../src/sync/engine';
 import { Device, ExpiredDrive, FakeDrive, stroke } from './syncFakes';
 
 const doc0: NotebookDoc = { id: 'nb', pages: [{ id: 'p1', template: 'blank', strokes: [], items: [] }] };
@@ -252,5 +253,31 @@ describe('syncing notebooks between devices', () => {
       expect(z).toEqual(x);
       expect(new Set(devices[0].strokeIds('nb'))).toEqual(new Set([...drawn].filter((id) => !erased.has(id))));
     }
+  });
+
+  it('reports progress while a new device downloads every notebook, downloads first', async () => {
+    const drive = new FakeDrive();
+    const a = new Device('deva', drive);
+    for (const id of ['n1', 'n2', 'n3']) a.newNotebook(id);
+    const up: number[][] = [];
+    await syncNotebooks({ drive, local: a, device: 'deva', onProgress: (p) => up.push([p.done, p.total, p.uploading]) });
+    expect(up).toEqual([[0, 3, 3], [1, 3, 3], [2, 3, 3], [3, 3, 3]]);
+
+    const b = new Device('devb', drive);
+    b.newNotebook('mine');
+    const seen: { done: number; total: number; downloading: number; uploading: number }[] = [];
+    const order: string[] = [];
+    const create = b.create.bind(b);
+    b.create = async (meta, ...rest) => (order.push(meta.id), create(meta, ...rest));
+    await syncNotebooks({ drive, local: b, device: 'devb', onProgress: (p) => seen.push({ ...p }) });
+    expect(seen[0]).toEqual({ done: 0, total: 4, downloading: 3, uploading: 1 });
+    expect(seen.at(-1)!.done).toBe(4);
+    expect(order).toEqual(['n1', 'n2', 'n3']);
+
+    // An everyday sync of a few edits shows no progress bar.
+    b.draw('n1', 'p1', 'x');
+    const quiet: unknown[] = [];
+    await syncNotebooks({ drive, local: b, device: 'devb', onProgress: (p) => quiet.push(p) });
+    expect(quiet).toEqual([]);
   });
 });
