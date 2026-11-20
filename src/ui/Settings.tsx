@@ -59,6 +59,8 @@ const ago = (t: number) => {
   return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : `at ${new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
 };
 
+const SYNC_SCOPE = 'Notebooks, folders, elements and preferences sync with your Google Drive; stylus, theme and handwriting settings stay per device.';
+
 /** How syncing is going, and what to do about it. */
 function SyncLine({ status }: { status: SyncStatus }) {
   const [message, action] = ((): [string, { label: string; run: () => void } | null] => {
@@ -74,9 +76,12 @@ function SyncLine({ status }: { status: SyncStatus }) {
       case 'error':
         return [`Couldn't sync. ${status.error ?? ''}`, { label: 'Try again', run: () => syncNow() }];
       case 'idle':
-        return [status.lastSynced ? `Notebooks synced with your Google Drive ${ago(status.lastSynced)}.` : 'Notebooks sync with your Google Drive.', { label: 'Sync now', run: () => syncNow() }];
+        return [
+          status.lastSynced ? `Synced with your Google Drive ${ago(status.lastSynced)}. Notebooks, folders, elements and preferences sync; stylus, theme and handwriting settings stay per device.` : SYNC_SCOPE,
+          { label: 'Sync now', run: () => syncNow() },
+        ];
       default:
-        return ['Notebooks sync with your Google Drive.', { label: 'Sync now', run: () => syncNow() }];
+        return [SYNC_SCOPE, { label: 'Sync now', run: () => syncNow() }];
     }
   })();
   return (

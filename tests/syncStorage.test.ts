@@ -1,13 +1,15 @@
 import 'fake-indexeddb/auto';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NotebookDoc, NotebookMeta } from '../src/core/model';
 import type { DocOp } from '../src/core/ops';
 import { DocumentStore } from '../src/core/store';
 import { compact, createNotebook, deletedSyncDocs, deleteNotebook, eventsAfter, loadDocument, openDb, putSyncDoc, resetDbForTests, applyMerged, appendEvents } from '../src/storage/db';
 import { Persister } from '../src/storage/persister';
-import { localNotebooks } from '../src/sync/local';
+import { localLibrary, localNotebooks } from '../src/sync/local';
+import { syncLibrary } from '../src/sync/library';
+import { getMeta, listFolders, putFolder, updateMeta } from '../src/storage/db';
 import { syncNotebooks } from '../src/sync/engine';
-import { Device, FakeDrive, stroke } from './syncFakes';
+import { Device, FakeDrive, Library, stroke } from './syncFakes';
 
 const meta = (id: string): NotebookMeta => ({ id, title: 'Test', cover: '#000', template: 'blank', createdAt: 1, updatedAt: 1, favourite: false, trashedAt: null, pageCount: 1 });
 const blank = (id: string): NotebookDoc => ({ id, pages: [{ id: 'p1', template: 'blank', strokes: [], items: [] }] });
@@ -120,5 +122,37 @@ describe('sync storage', () => {
 
     await persister.dispose();
     expect((await loadDocument('n1')).doc).toEqual(store.doc);
+  });
+
+  it('syncs titles, folders and settings between this browser and another device', async () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v), removeItem: (k: string) => store.delete(k) });
+    const drive = new FakeDrive();
+    const sync = () => syncLibrary({ drive, local: localLibrary, device: 'here' });
+    const other = new Library('there', drive);
+    other.addNotebook('n1');
+
+    await createNotebook(meta('n1'), blank('n1'));
+    await putFolder({ id: 'f1', name: 'School', color: '#123456', parentId: null, createdAt: 1 });
+    await updateMeta('n1', { title: 'Biology', folderId: 'f1' });
+    store.set('jnotes.presets', JSON.stringify([{ id: 'p1' }]));
+    store.set('jnotes.penOnly', 'true');
+    await sync();
+    await other.sync();
+    expect(other.metas.get('n1')).toMatchObject({ title: 'Biology', folderId: 'f1' });
+    expect(other.folders.get('f1')!.name).toBe('School');
+    expect(other.settings.get('jnotes.presets')).toEqual([{ id: 'p1' }]);
+    expect(other.settings.has('jnotes.penOnly')).toBe(false);
+
+    other.metas.get('n1')!.favourite = true;
+    other.folders.delete('f1');
+    other.settings.set('jnotes.snap', false);
+    await other.sync();
+    expect(await sync()).toBe(true);
+    expect((await getMeta('n1'))!.favourite).toBe(true);
+    expect(await listFolders()).toEqual([]);
+    expect(store.get('jnotes.snap')).toBe('false');
+    expect(await sync()).toBe(false);
+    vi.unstubAllGlobals();
   });
 });

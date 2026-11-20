@@ -9,7 +9,8 @@ import { clearSync } from '../storage/db';
 import { setPersisterHooks } from '../storage/persister';
 import { DriveAuthError, DriveError, GoogleDrive } from './drive';
 import { syncNotebooks } from './engine';
-import { localNotebooks } from './local';
+import { localLibrary, localNotebooks } from './local';
+import { syncLibrary } from './library';
 
 export type SyncState =
   /** Signed out. */
@@ -89,8 +90,13 @@ async function run(only?: string): Promise<void> {
   set({ state: 'syncing', error: null });
   try {
     const drive = new GoogleDrive(() => accessToken()?.token ?? null);
-    const result = await syncNotebooks({ drive, local: localNotebooks, device: deviceId(), only });
-    if (result.changed.length) window.dispatchEvent(new CustomEvent(SYNCED_EVENT, { detail: result.changed }));
+    const device = deviceId();
+    // One listing for both: the notebook sync doesn't touch the library's files.
+    const files = await drive.list();
+    const result = await syncNotebooks({ drive, local: localNotebooks, device, only, files });
+    // Then titles, folders, elements and settings: after notebooks, so new ones exist here first.
+    const libraryChanged = await syncLibrary({ drive, local: localLibrary, device, files });
+    if (result.changed.length || libraryChanged) window.dispatchEvent(new CustomEvent(SYNCED_EVENT, { detail: result.changed }));
     set(
       result.failed.length
         ? { state: 'error', error: `${result.failed.length === 1 ? 'A notebook' : `${result.failed.length} notebooks`} could not sync: ${result.failed[0].error}` }
