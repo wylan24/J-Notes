@@ -25,6 +25,7 @@ import { summaryCounts } from '../core/study';
 import { usePwa } from '../pwa/register';
 import { storedSettings, storeSettings, type EditorSettings } from './settingsStore';
 import { SYNCED_EVENT, useSyncStatus } from '../sync';
+import { progressText } from './Settings';
 import { signIn } from '../auth/google';
 
 const KIND_LABELS: Record<KindFilter, string> = { all: 'Everything', notebook: 'Notebooks', whiteboard: 'Whiteboards', text: 'Documents', deck: 'Study sets' };
@@ -382,6 +383,7 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
         </div>
       </header>
 
+      <SyncProgressBar />
       <div className="tabs-row">
         <nav className="tabs" role="tablist">
           {(['all', 'favourites', 'trash'] as Tab[]).map((t) => (
@@ -707,9 +709,22 @@ function NewNotebookDialog({ onCancel, onCreate }: { onCancel: () => void; onCre
   );
 }
 
+/** Whole notebooks being copied (a new device, a first sign-in): how far along. */
+function SyncProgressBar() {
+  const { state, progress } = useSyncStatus();
+  if (state !== 'syncing' || !progress) return null;
+  return (
+    <div className="sync-progress" role="status">
+      <span>{progressText(progress)}…</span>
+      <progress value={progress.done} max={progress.total} aria-label="Sync progress" />
+    </div>
+  );
+}
+
 /** How Drive sync is going, shown only when there is something to see or do. */
 function SyncIndicator({ onOpenSettings }: { onOpenSettings: () => void }) {
-  const { state } = useSyncStatus();
+  const { state, progress } = useSyncStatus();
+  if (state === 'syncing' && progress) return null; // the progress bar says it
   if (state === 'syncing') return <span className="sync-chip" role="status">Syncing…</span>;
   if (state === 'reconnect')
     return (

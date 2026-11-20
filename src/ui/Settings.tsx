@@ -6,8 +6,9 @@ import type { EditorSettings, InkToolName } from './settingsStore';
 import { setHandwritingEnabled, useHandwritingEnabled } from '../hwr/indexer';
 import { onRecognizerStatus, recognizerStatus, startRecognizer, stop as stopRecognizer } from '../hwr/recognizer';
 import { setSpellcheckEnabled, useSpellcheckEnabled } from '../hwr/spellcheck';
-import { clientId, dismissSignInError, signIn, signOut, useAccount } from '../auth/google';
-import { syncNow, useSyncStatus, type SyncStatus } from '../sync';
+import { clientId, dismissSignInError, signIn, useAccount } from '../auth/google';
+import { signOutOfSync, syncNow, useSyncStatus, type SyncStatus } from '../sync';
+import type { SyncProgress } from '../sync/engine';
 
 const THEMES: { id: Theme; label: string }[] = [
   { id: 'system', label: 'System' },
@@ -61,12 +62,19 @@ const ago = (t: number) => {
 
 const SYNC_SCOPE = 'Notebooks, folders, elements and preferences sync with your Google Drive; stylus, theme and handwriting settings stay per device.';
 
+/** "Downloading 3 of 12 notebooks from Google Drive". */
+export function progressText(p: SyncProgress): string {
+  const verb = p.downloading && p.uploading ? 'Copying' : p.downloading ? 'Downloading' : 'Uploading';
+  const where = p.downloading && p.uploading ? 'to and from' : p.downloading ? 'from' : 'to';
+  return `${verb} ${Math.min(p.done + 1, p.total)} of ${p.total} notebook${p.total === 1 ? '' : 's'} ${where} Google Drive`;
+}
+
 /** How syncing is going, and what to do about it. */
 function SyncLine({ status }: { status: SyncStatus }) {
   const [message, action] = ((): [string, { label: string; run: () => void } | null] => {
     switch (status.state) {
       case 'syncing':
-        return ['Syncing with Google Drive…', null];
+        return [status.progress ? `${progressText(status.progress)}…` : 'Syncing with Google Drive…', null];
       case 'offline':
         return ["Offline. Changes sync when you're back online.", null];
       case 'reconnect':
@@ -104,6 +112,22 @@ function AccountSection() {
   const sync = useSyncStatus();
   const [pictureFailed, setPictureFailed] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const leave = async (removeLocal: boolean) => {
+    setBusy(true);
+    setProblem(null);
+    const r = await signOutOfSync(removeLocal);
+    setBusy(false);
+    if (!r.ok) return setProblem(r.reason);
+    setConfirming(false);
+    setNotice(
+      removeLocal
+        ? `Signed out. Removed ${r.removed} notebook${r.removed === 1 ? '' : 's'} from this device; ${r.removed === 1 ? 'it comes' : 'they come'} back when you sign in again.${r.kept ? ` Kept ${r.kept} that ${r.kept === 1 ? "isn't" : "aren't"} in Google Drive yet or ${r.kept === 1 ? 'is' : 'are'} open.` : ''}`
+        : 'Signed out. Your notebooks are still on this device.',
+    );
+  };
   return (
     <section>
       <h3>Account</h3>
@@ -131,31 +155,47 @@ function AccountSection() {
                 <span className="setting-hint">{account.email}</span>
               </span>
             </span>
-            {confirming ? (
-              <span className="account-actions">
-                <button type="button" className="btn sm ghost" onClick={() => setConfirming(false)}>
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="btn sm danger"
-                  onClick={() => {
-                    signOut();
-                    setConfirming(false);
-                  }}
-                >
-                  Sign out
-                </button>
-              </span>
-            ) : (
-              <button type="button" className="btn sm" onClick={() => setConfirming(true)}>
+            {!confirming && (
+              <button type="button" className="btn sm" onClick={() => (setConfirming(true), setNotice(null))}>
                 Sign out
               </button>
             )}
           </div>
-          {confirming ? <p className="setting-hint">Your notebooks stay on this device after you sign out.</p> : <SyncLine status={sync} />}
+          {confirming ? (
+            <div className="sign-out">
+              <p className="setting-hint">
+                {busy
+                  ? 'Making sure everything is in your Google Drive…'
+                  : 'Keep your notebooks on this device to carry on using them signed out, or remove them from it. Removed notebooks stay in your Google Drive and come back when you sign in again; anything not in Drive yet is kept.'}
+              </p>
+              {problem && (
+                <p className="setting-hint danger-text" role="alert">
+                  {problem}
+                </p>
+              )}
+              <div className="account-actions">
+                <button type="button" className="btn sm ghost" disabled={busy} onClick={() => (setConfirming(false), setProblem(null))}>
+                  Cancel
+                </button>
+                <button type="button" className="btn sm danger" disabled={busy} onClick={() => void leave(true)}>
+                  Remove from this device
+                </button>
+                <button type="button" className="btn sm primary" disabled={busy} onClick={() => void leave(false)}>
+                  Keep and sign out
+                </button>
+              </div>
+            </div>
+          ) : (
+            <SyncLine status={sync} />
+          )}
         </>
       ) : clientId ? (
+        <>
+        {notice && (
+          <p className="setting-hint" role="status">
+            {notice}
+          </p>
+        )}
         <div className="setting-row">
           <span>
             <span className="setting-label">Sign in with Google</span>
@@ -165,6 +205,7 @@ function AccountSection() {
             Sign in
           </button>
         </div>
+        </>
       ) : (
         <p className="setting-hint">Google sign-in isn't set up in this build of J Notes.</p>
       )}

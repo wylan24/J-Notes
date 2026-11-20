@@ -187,6 +187,13 @@ Size: S = 1–2 files, M = 3–5 files.
     Per device: stylus only, theme, handwriting recognition, zoom, tabs, sidebar. Runs after notebooks each round.
   - Limits: settings changed on another device take effect when the screen using them next opens.
 - [ ] **12.5 First run on a new device; sign-out options (S)** — download all, progress UI; "keep local copies" choice. Depends: 12.3
+  - Built: a new device downloads every notebook on its first sync (12.3), downloads first, with progress in the
+    library ("Downloading 3 of 12 notebooks from Google Drive", with a bar) and Settings; signing in on a device
+    that has notebooks shows its first upload the same way. Everyday syncs show no bar. Signing out asks: Keep
+    and sign out, or Remove from this device. Removing syncs first and refuses unless that works (offline,
+    expired access), then removes only notebooks and elements safely in Drive: kept are ones with edits not yet
+    uploaded, never synced (quick notes) or open; folders go only when no notebook is kept; preferences stay.
+    It forgets what was synced at once, so nothing removed is taken as deleted and removed from Drive.
 
 ## Phase 13: Sharing and collaboration (free relay; blocked on open questions 1–2)
 

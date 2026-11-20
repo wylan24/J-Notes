@@ -4,6 +4,7 @@ import type { Folder } from '../core/model';
 import type { SavedElement } from '../core/elements';
 import {
   applyMerged,
+  clearSync,
   blobIds,
   createNotebook,
   deletedSyncDocs,
@@ -140,3 +141,37 @@ export const localLibrary: LocalLibrary = {
   cached: getSyncFile,
   cache: putSyncFile,
 };
+
+/**
+ * On signing out with "remove from this device": delete the notebooks and saved elements that are
+ * safely in Drive (they come back on signing in again). Kept: notebooks with edits not yet
+ * uploaded, ones never synced (quick notes too), and any open on screen. Call after a sync that
+ * succeeded. Folders go only when no notebook is kept. Preferences always stay. Sync starts
+ * afresh after this, as after signing out.
+ */
+export async function removeSyncedCopies(): Promise<{ removed: number; kept: number }> {
+  let removed = 0;
+  let kept = 0;
+  for (const m of await listNotebooks()) {
+    const rec = await getSyncDoc(m.id);
+    const safe = !m.quicknote && !openPersisters.has(m.id) && rec && 'uploaded' in rec && !(await eventsAfter(m.id, rec.uploaded)).length;
+    if (!safe) {
+      kept++;
+      continue;
+    }
+    // Forget its sync record first, so deleting it here doesn't delete it from Drive too.
+    await forgetSyncDocs([m.id]);
+    await deleteNotebook(m.id);
+    removed++;
+  }
+  const ledger = await localLibrary.ledger();
+  for (const e of await listElements()) {
+    const synced = ledger.get(keys.element(e.id));
+    if (synced && synced.v !== null) await deleteElement(e.id);
+  }
+  if (!kept) for (const f of await listFolders()) await removeFolderRecord(f.id);
+  // Forget what was synced, now rather than when the sign-out lands: otherwise a sync in between
+  // would take the removed elements and folders as deleted here, and delete them from Drive too.
+  await clearSync();
+  return { removed, kept };
+}

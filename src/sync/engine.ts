@@ -52,6 +52,14 @@ export interface LocalNotebooks {
   cache(name: string, version: string, value: unknown): Promise<void>;
 }
 
+/** Notebooks being copied whole: downloaded (new on this device) or uploaded (new to Drive). */
+export interface SyncProgress {
+  done: number;
+  total: number;
+  downloading: number;
+  uploading: number;
+}
+
 export interface SyncResult {
   /** Notebooks changed, added or removed on this device. */
   changed: string[];
@@ -98,6 +106,8 @@ export async function syncNotebooks(o: {
   snapshotEvery?: number;
   /** The folder's listing, if already fetched. */
   files?: DriveFile[];
+  /** Told before and after each notebook copied whole; not called when there are none. */
+  onProgress?: (p: SyncProgress) => void;
 }): Promise<SyncResult> {
   const { drive, local, device } = o;
   const snapshotEvery = o.snapshotEvery ?? SNAPSHOT_EVERY;
@@ -211,13 +221,37 @@ export async function syncNotebooks(o: {
   const ids = new Set<string>();
   for (const [id, m] of metas) if (!m.quicknote) ids.add(id); // a quick note syncs once it is kept
   for (const id of groups.keys()) if (!deleted.includes(id)) ids.add(id);
-  for (const id of ids) {
-    if (o.only && id !== o.only) continue;
+  const todo = [...ids].filter((id) => !o.only || id === o.only);
+
+  // Whole notebooks to copy (a new device, or signing in on a device that has notebooks) take a
+  // while, so they are counted for a progress bar. Everyday syncs of a few edits are not.
+  const whole = new Map<string, 'down' | 'up'>();
+  for (const id of todo) {
+    const g = groups.get(id);
+    if (g?.deleted) continue;
+    if (!metas.has(id) && g?.meta && g.snapshots.length) whole.set(id, 'down');
+    else if (metas.has(id) && !g?.snapshots.length) whole.set(id, 'up');
+  }
+  const progress: SyncProgress = {
+    done: 0,
+    total: whole.size,
+    downloading: [...whole.values()].filter((k) => k === 'down').length,
+    uploading: [...whole.values()].filter((k) => k === 'up').length,
+  };
+  if (progress.total) o.onProgress?.({ ...progress });
+
+  // Downloads first, so a new device fills up before it spends time on anything else.
+  todo.sort((a, b) => (whole.get(a) === 'down' ? 0 : 1) - (whole.get(b) === 'down' ? 0 : 1));
+  for (const id of todo) {
     try {
       if (await syncOne(id, groups.get(id), metas.get(id))) result.changed.push(id);
     } catch (e) {
       if (e instanceof DriveAuthError) throw e;
       result.failed.push({ docId: id, error: e instanceof Error ? e.message : String(e) });
+    }
+    if (whole.has(id)) {
+      progress.done++;
+      o.onProgress?.({ ...progress });
     }
   }
   return result;
