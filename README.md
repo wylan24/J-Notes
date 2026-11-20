@@ -13,6 +13,26 @@ npm test           # core and storage tests
 npm run build      # typecheck and production build in dist/
 ```
 
+Pushing to `main` tests, builds and deploys to GitHub Pages: https://wylan24.github.io/J-Notes/.
+
+### Google sign-in (optional)
+
+Without a client ID, sign-in is hidden and the app works the same. To turn it on:
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), create a project. Under
+   **Google Auth Platform**, set up branding (app name, support email) and, under **Data access**, add the scopes
+   `openid`, `email`, `profile` and `.../auth/drive.appdata`. Leave it in **Testing** and add your Google account
+   under **Audience › Test users**.
+2. Enable the **Google Drive API** for the project (sync uses it).
+3. Under **Clients**, create a **Web application** client with:
+   - Authorised JavaScript origins: `https://wylan24.github.io`, `http://localhost:5173`
+   - Authorised redirect URIs: `https://wylan24.github.io/J-Notes/`, `http://localhost:5173/`
+4. The client ID is public, not a secret. For the hosted app, save it as the repository variable `GOOGLE_CLIENT_ID`
+   (Settings › Secrets and variables › Actions › Variables) and redeploy. For local dev, put
+   `VITE_GOOGLE_CLIENT_ID=<id>` in `.env.local`.
+
+Sign-in redirects to Google and back (no popup, so it works in the app installed on an iPad), with no backend.
+
 ## Features
 - A library of notebooks: covers with live thumbnails, search, favourites, trash, restore and permanent delete.
 - Paper templates: ruled, grid, dotted and blank.

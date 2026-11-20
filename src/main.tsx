@@ -4,9 +4,12 @@ import { App } from './App';
 import './ui/styles.css';
 import { applyTheme } from './ui/theme';
 import { setUpPwa } from './pwa/register';
+import { completeSignIn } from './auth/google';
 
 // Light or dark as chosen, before anything is drawn.
 applyTheme();
+// Coming back from Google's sign-in page: read the result out of the address before routing.
+completeSignIn();
 // Offline support, updates and the install prompt.
 setUpPwa();
 
