@@ -6,6 +6,7 @@ import type { EditorSettings, InkToolName } from './settingsStore';
 import { setHandwritingEnabled, useHandwritingEnabled } from '../hwr/indexer';
 import { onRecognizerStatus, recognizerStatus, startRecognizer, stop as stopRecognizer } from '../hwr/recognizer';
 import { setSpellcheckEnabled, useSpellcheckEnabled } from '../hwr/spellcheck';
+import { clientId, dismissSignInError, signIn, signOut, useAccount } from '../auth/google';
 
 const THEMES: { id: Theme; label: string }[] = [
   { id: 'system', label: 'System' },
@@ -49,6 +50,83 @@ function Choice<T extends string>({ label, options, value, onChange }: { label: 
         ))}
       </div>
     </div>
+  );
+}
+
+/** Signing in with Google: optional, and it never changes what is on this device. */
+function AccountSection() {
+  const { account, error } = useAccount();
+  const [pictureFailed, setPictureFailed] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  return (
+    <section>
+      <h3>Account</h3>
+      {error && (
+        <p className="setting-hint danger-text" role="alert">
+          {error}{' '}
+          <button type="button" className="btn sm ghost" onClick={dismissSignInError}>
+            Dismiss
+          </button>
+        </p>
+      )}
+      {account ? (
+        <>
+          <div className="setting-row">
+            <span className="account">
+              {account.picture && !pictureFailed ? (
+                <img className="account-avatar" src={account.picture} alt="" referrerPolicy="no-referrer" onError={() => setPictureFailed(true)} />
+              ) : (
+                <span className="account-avatar" aria-hidden="true">
+                  {account.name.trim().charAt(0).toUpperCase()}
+                </span>
+              )}
+              <span>
+                <span className="setting-label">{account.name}</span>
+                <span className="setting-hint">{account.email}</span>
+              </span>
+            </span>
+            {confirming ? (
+              <span className="account-actions">
+                <button type="button" className="btn sm ghost" onClick={() => setConfirming(false)}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn sm danger"
+                  onClick={() => {
+                    signOut();
+                    setConfirming(false);
+                  }}
+                >
+                  Sign out
+                </button>
+              </span>
+            ) : (
+              <button type="button" className="btn sm" onClick={() => setConfirming(true)}>
+                Sign out
+              </button>
+            )}
+          </div>
+          <p className="setting-hint">
+            {confirming
+              ? 'Your notebooks stay on this device after you sign out.'
+              : 'Signed in with Google. Syncing notebooks to your Google Drive is coming next.'}
+          </p>
+        </>
+      ) : clientId ? (
+        <div className="setting-row">
+          <span>
+            <span className="setting-label">Sign in with Google</span>
+            <span className="setting-hint">Optional. J Notes works fully without an account; signing in will let it sync through your own Google Drive.</span>
+          </span>
+          <button type="button" className="btn sm primary" onClick={signIn} disabled={!navigator.onLine}>
+            Sign in
+          </button>
+        </div>
+      ) : (
+        <p className="setting-hint">Google sign-in isn't set up in this build of J Notes.</p>
+      )}
+    </section>
   );
 }
 
@@ -173,6 +251,7 @@ export function SettingsDialog({ values, onChange, onClose, board }: Props) {
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal settings" role="dialog" aria-label="Settings" onClick={(e) => e.stopPropagation()}>
         <h2>Settings</h2>
+        <AccountSection />
         <section>
           <h3>Appearance</h3>
           <Choice label="Theme" options={THEMES} value={theme} onChange={setTheme} />

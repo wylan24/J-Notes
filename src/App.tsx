@@ -5,6 +5,7 @@ import { TimerWatcher } from './ui/Timer';
 import { Presentation } from './ui/Presentation';
 import { openTab } from './ui/tabsStore';
 import { usePwa } from './pwa/register';
+import { dismissSignInError, useAccount } from './auth/google';
 
 /** Shown when a new version has been downloaded: it takes over only when the person chooses. */
 function UpdateBanner() {
@@ -15,6 +16,20 @@ function UpdateBanner() {
       <span>A new version of J Notes is ready.</span>
       <button className="btn sm primary" onClick={update}>
         Reload
+      </button>
+    </div>
+  );
+}
+
+/** A sign-in that failed on Google's side, shown on whatever screen the person came back to. */
+function SignInNotice() {
+  const { error } = useAccount();
+  if (!error) return null;
+  return (
+    <div className="update-banner" role="alert">
+      <span>{error}</span>
+      <button className="btn sm" onClick={dismissSignInError}>
+        OK
       </button>
     </div>
   );
@@ -53,6 +68,7 @@ function MainApp() {
       {docId ? <Editor key={docId} id={docId} onExit={() => (location.hash = '#/')} /> : <Library onOpen={(id) => (location.hash = `#/n/${id}`)} />}
       <TimerWatcher />
       <UpdateBanner />
+      <SignInNotice />
     </>
   );
 }

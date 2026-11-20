@@ -156,6 +156,11 @@ Size: S = 1–2 files, M = 3–5 files.
     base and leaves the rest of the github.io origin alone. Installed from Safari on the iPad and opens offline.
 - [ ] **12.2 Google sign-in (M)** — Google Identity Services; scopes `openid email profile drive.appdata` only; signed-out mode unchanged.
   - Accept: sign in, reload, still signed in; sign out leaves local notebooks intact; no backend involved.
+  - Built: Settings › Account. Sign-in redirects to Google and back (OAuth implicit flow, `token id_token`), not a
+    popup, so it works in the iPad home-screen app; `core/account.ts` checks state, nonce, audience, issuer and
+    expiry. Who is signed in is kept in localStorage; the hour-long Drive token only in sessionStorage. Sign out
+    revokes the token and touches nothing else. Needs an OAuth client (README › Google sign-in); unset, sign-in
+    is hidden. **Left to check:** create the client, then sign in on the hosted app and the iPad.
 - [ ] **12.3 Drive sync of notebooks (M)** — upload event batches, snapshots and blobs to the app data folder; pull and merge on open and on focus.
   - Accept: edit on two devices offline, reconnect, both converge with no lost strokes (merge logic unit-tested with fake Drive).
 - [ ] **12.4 Sync library, folders, elements and settings (S)** Depends: 12.3

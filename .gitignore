@@ -3,3 +3,4 @@ dist
 .DS_Store
 *.log
 spike/hwr/data/
+*.local
