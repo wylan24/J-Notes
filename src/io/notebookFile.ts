@@ -1,5 +1,6 @@
 import { textDocBlobIds } from '../core/textDoc';
-import { normalizeDoc, type DocKind, type NotebookDoc, type NotebookMeta, type OutlineEntry, type Template } from '../core/model';
+import { DOC_KINDS, normalizeDoc, type CardSide, type DocKind, type NotebookDoc, type NotebookMeta, type OutlineEntry, type StudyCard, type StudyDay, type Template } from '../core/model';
+import { cardBlobIds, deckSummary } from '../core/study';
 import { normaliseLevels } from '../core/outline';
 import { newId } from '../core/ids';
 import { isCoverDataUrl } from '../core/cover';
@@ -34,6 +35,7 @@ export function referencedBlobIds(doc: NotebookDoc): string[] {
   }
   for (const r of doc.recordings ?? []) ids.add(r.blobId);
   for (const id of textDocBlobIds(doc.text)) ids.add(id);
+  for (const card of doc.cards ?? []) for (const id of cardBlobIds(card)) ids.add(id);
   return [...ids];
 }
 
@@ -78,11 +80,13 @@ export function fromFile(raw: unknown): { meta: NotebookMeta; doc: NotebookDoc; 
       ...(Array.isArray(f.doc.bookmarks) && f.doc.bookmarks.length ? { bookmarks: f.doc.bookmarks.filter((b) => typeof b === 'string') } : {}),
       ...outlineFrom(f.doc.outline),
       ...(f.doc.text && typeof f.doc.text === 'object' && f.doc.text.type === 'doc' ? { text: f.doc.text } : {}),
+      ...cardsFrom(f.doc.cards, f.doc.studyLog),
     }),
     blobs,
     meta: {
       id,
-      ...(f.kind === 'whiteboard' || f.kind === 'text' ? { kind: f.kind } : {}),
+      ...(f.kind && f.kind !== 'notebook' && DOC_KINDS.includes(f.kind) ? { kind: f.kind } : {}),
+      ...(f.kind === 'deck' ? { deck: deckSummary(Array.isArray(f.doc.cards) ? cardsFrom(f.doc.cards).cards ?? [] : []) } : {}),
       title: String(f.title || 'Imported notebook'),
       cover: f.cover || '#3d5a80',
       // Only a picture we could have made; anything else is dropped rather than shown.
@@ -117,6 +121,16 @@ export function dataUrlToBytes(url: string): { type: string; bytes: ArrayBuffer 
   const u8 = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
   return { type: m[1] || 'application/octet-stream', bytes: u8.buffer };
+}
+
+const isSide = (s: unknown): s is CardSide => !!s && typeof (s as CardSide).text === 'string';
+
+/** A file's flashcards and study history, keeping only well-formed ones. */
+function cardsFrom(raw: unknown, rawLog?: unknown): { cards?: StudyCard[]; studyLog?: StudyDay[] } {
+  if (!Array.isArray(raw)) return {};
+  const cards = raw.filter((c): c is StudyCard => !!c && typeof c.id === 'string' && isSide(c.front) && isSide(c.back) && typeof c.createdAt === 'number');
+  const log = Array.isArray(rawLog) ? rawLog.filter((d): d is StudyDay => !!d && typeof d.day === 'string' && typeof d.reviewed === 'number' && typeof d.correct === 'number') : [];
+  return { cards, ...(log.length ? { studyLog: log } : {}) };
 }
 
 /** A file's outline, keeping only well-formed entries. */

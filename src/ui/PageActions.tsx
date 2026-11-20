@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { pagePaper, pageSize, type NotebookMeta, type Page, type Template } from '../core/model';
+import { docKind, pagePaper, pageSize, type NotebookMeta, type Page, type Template } from '../core/model';
 import { listNotebooks } from '../storage/db';
 import { TemplateGrid, type CustomTemplate } from './TemplateGrid';
 
@@ -62,7 +62,7 @@ export function NotebookPickerDialog({
   const [notebooks, setNotebooks] = useState<NotebookMeta[] | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
-    void listNotebooks().then((all) => setNotebooks(all.filter((n) => n.id !== currentId && n.trashedAt === null)));
+    void listNotebooks().then((all) => setNotebooks(all.filter((n) => n.id !== currentId && n.trashedAt === null && docKind(n) === 'notebook')));
   }, [currentId]);
   const verb = mode === 'move' ? 'Move' : 'Copy';
   return (

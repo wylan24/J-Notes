@@ -1,5 +1,6 @@
 import type { HwrEntry } from '../core/handwriting';
-import { normalizeDoc, type Folder, type NotebookDoc, type NotebookMeta, type Page } from '../core/model';
+import { normalizeDoc, type Folder, type NotebookDoc, type NotebookMeta, type Page, type StudyCard } from '../core/model';
+import { deckSummary } from '../core/study';
 import { planFolderDelete } from '../core/folders';
 import type { Session } from '../core/timer';
 import type { SavedElement } from '../core/elements';
@@ -180,6 +181,24 @@ export async function appendPage(docId: string, page: Page, blobs: Pick<StoredBl
   const metaStore = tx.objectStore('meta');
   const cur = await req(metaStore.get(docId) as IDBRequest<NotebookMeta | undefined>);
   if (cur) metaStore.put({ ...cur, pageCount: doc.pages.length + 1, updatedAt: event.ts });
+  await done(tx);
+}
+
+/**
+ * Add flashcards to the end of a study set that isn't open, with the photos they show, as a logged
+ * `cards.added` event. Used to make cards from a notebook's lasso selection.
+ */
+export async function appendCards(docId: string, cards: StudyCard[], blobs: Pick<StoredBlob, 'id' | 'type' | 'bytes'>[]): Promise<void> {
+  if (!cards.length) return;
+  const { doc, seq } = await loadDocument(docId);
+  const db = await openDb();
+  const tx = db.transaction(['events', 'meta', 'blobs'], 'readwrite');
+  const event: DocEvent = { docId, seq: seq + 1, ts: Date.now(), op: { type: 'cards.added', cards } };
+  tx.objectStore('events').put(event);
+  for (const b of blobs) tx.objectStore('blobs').put({ ...b, docId } satisfies StoredBlob);
+  const metaStore = tx.objectStore('meta');
+  const cur = await req(metaStore.get(docId) as IDBRequest<NotebookMeta | undefined>);
+  if (cur) metaStore.put({ ...cur, deck: deckSummary([...(doc.cards ?? []), ...cards]), updatedAt: event.ts });
   await done(tx);
 }
 

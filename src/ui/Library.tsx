@@ -21,10 +21,11 @@ import { Icon } from './icons';
 import { whiteboardPage } from '../core/whiteboard';
 import { EMPTY_TEXT_DOC } from '../core/textDoc';
 import { SettingsDialog } from './Settings';
+import { summaryCounts } from '../core/study';
 import { usePwa } from '../pwa/register';
 import { storedSettings, storeSettings, type EditorSettings } from './settingsStore';
 
-const KIND_LABELS: Record<KindFilter, string> = { all: 'Everything', notebook: 'Notebooks', whiteboard: 'Whiteboards', text: 'Documents' };
+const KIND_LABELS: Record<KindFilter, string> = { all: 'Everything', notebook: 'Notebooks', whiteboard: 'Whiteboards', text: 'Documents', deck: 'Study sets' };
 
 const isNotebookFile = (f: File) => /\.json$/i.test(f.name) || f.type === 'application/json';
 const SIZES: { id: PageSizePreset; label: string }[] = [
@@ -144,6 +145,17 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
     onOpen(id);
   };
 
+  /** A new study set of flashcards, straight into it. */
+  const newStudySet = async () => {
+    const id = newId();
+    const now = Date.now();
+    await createNotebook(
+      { id, kind: 'deck', title: 'Untitled study set', cover: COVERS[2], template: 'blank', createdAt: now, updatedAt: now, favourite: false, trashedAt: null, pageCount: 0, deck: { cards: 0, due: [] }, ...fileHere },
+      { id, pages: [], cards: [] },
+    );
+    onOpen(id);
+  };
+
   /** A blank notebook straight into the editor; thrown away if left empty. */
   const quicknote = async () => {
     const id = newId();
@@ -252,7 +264,7 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
 
   // Read the handwriting of notebooks that aren't open, while the library is shown, so search finds
   // them. Locked notebooks are left alone.
-  const toIndex = (items ?? []).filter((n) => n.trashedAt === null && !n.lock && docKind(n) !== 'text').map((n) => n.id).join();
+  const toIndex = (items ?? []).filter((n) => n.trashedAt === null && !n.lock && docKind(n) !== 'text' && docKind(n) !== 'deck').map((n) => n.id).join();
   useEffect(() => {
     if (!hwrOn || !toIndex) return;
     const ctl = new AbortController();
@@ -350,6 +362,9 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
           </button>
           <button className="btn ghost" onClick={() => void newWhiteboard()} title="One endless page for diagrams and brainstorming">
             <Icon name="plus" /> Whiteboard
+          </button>
+          <button className="btn ghost" onClick={() => void newStudySet()} title="Flashcards studied with spaced repetition">
+            <Icon name="plus" /> Study set
           </button>
           <button className="btn primary" onClick={() => setCreating(true)}>
             <Icon name="plus" /> New notebook
@@ -451,6 +466,8 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
                 {/* A locked notebook never shows its first page; a chosen cover picture is fine. */}
                 {n.coverImage || (n.thumbnail && !n.lock) ? (
                   <img src={n.coverImage ?? n.thumbnail} alt="" />
+                ) : docKind(n) === 'deck' ? (
+                  <DeckCover meta={n} />
                 ) : (
                   <span className="cover-blank" style={{ background: n.cover }} />
                 )}
@@ -468,7 +485,7 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
                   </div>
                 )}
                 <div className="card-sub">
-                  {docKind(n) === 'whiteboard' ? 'Whiteboard' : docKind(n) === 'text' ? 'Document' : `${n.pageCount} ${n.pageCount === 1 ? 'page' : 'pages'}`} · {dateLabel(n)}
+                  {kindLabel(n)} · {dateLabel(n)}
                 </div>
               </div>
               <div className="card-actions">
@@ -560,6 +577,40 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
         />
       )}
     </div>
+  );
+}
+
+/** What the card under a library item's title says it is. */
+function kindLabel(n: NotebookMeta): string {
+  const plural = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
+  switch (docKind(n)) {
+    case 'whiteboard':
+      return 'Whiteboard';
+    case 'text':
+      return 'Document';
+    case 'deck': {
+      const { due } = summaryCounts(n.deck, Date.now());
+      return `${plural(n.deck?.cards ?? 0, 'card', 'cards')}${due ? ` · ${due} due` : ''}`;
+    }
+    default:
+      return plural(n.pageCount, 'page', 'pages');
+  }
+}
+
+/** A study set's cover: a stack of cards in its colour, with how many are waiting. */
+function DeckCover({ meta }: { meta: NotebookMeta }) {
+  const { due, new: fresh } = summaryCounts(meta.deck, Date.now());
+  const waiting = due + fresh;
+  return (
+    <span className="deck-cover" style={{ '--deck': meta.cover } as React.CSSProperties}>
+      <span className="deck-sheet back" />
+      <span className="deck-sheet mid" />
+      <span className="deck-sheet top">
+        <strong>{meta.deck?.cards ?? 0}</strong>
+        <small>{meta.deck?.cards === 1 ? 'card' : 'cards'}</small>
+        {waiting > 0 && <em>{due ? `${due} due` : `${fresh} new`}</em>}
+      </span>
+    </span>
   );
 }
 

@@ -136,6 +136,10 @@ interface Props {
   onCopy?: (sel: Selection, cut: boolean) => void;
   /** Add the selection's area to the notebook's outline. */
   onAddToOutline?: (sel: Selection) => void;
+  /** Make a flashcard from the selection, or finish one whose front was chosen first. */
+  onAddToStudySet?: (sel: Selection) => void;
+  /** A card's front is chosen and its back is being lassoed. */
+  cardBackPending?: boolean;
   /** Go where a tapped link points. */
   onFollowLink?: (target: LinkTarget) => void;
   /** Make the selection a link, or edit the link that is selected. */
@@ -276,7 +280,7 @@ type Active =
   | { kind: 'laser'; pointerId: number; cursor: Vec }
   | { kind: 'tape'; pointerId: number; start: Vec; cur: Vec };
 
-export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, onScreenshot, onCopy, onAddToOutline, onFollowLink, onEditLink, readOnly, onLaser, onSample, revealed, onToggleTape, onScribbleErase, playback, onSeekInk, highlights, onLayerBlocked, handwriting = null, spell = null }: Props) {
+export function PageView({ page, zoom, store, tool, penOnly, gesture, selection, setSelection, selectionColors, stickyColors, rulerEdges, zoomTarget, setZoomTarget, onSaveElement, onScreenshot, onCopy, onAddToOutline, onAddToStudySet, cardBackPending, onFollowLink, onEditLink, readOnly, onLaser, onSample, revealed, onToggleTape, onScribbleErase, playback, onSeekInk, highlights, onLayerBlocked, handwriting = null, spell = null }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const baseRef = useRef<HTMLCanvasElement>(null);
   const liveRef = useRef<HTMLCanvasElement>(null);
@@ -1437,6 +1441,12 @@ export function PageView({ page, zoom, store, tool, penOnly, gesture, selection,
     if (onEditLink) moreActions.push({ label: soleItem?.kind === 'link' ? 'Edit link' : 'Add link…', onClick: () => onEditLink(selected, soleItem?.kind === 'link' ? soleItem : null) });
     if (onAddToOutline) moreActions.push({ label: 'Add to outline', onClick: () => onAddToOutline(selected) });
     if (onSaveElement) moreActions.push({ label: 'Save as element', onClick: () => onSaveElement(selected) });
+    if (onAddToStudySet) {
+      const add = { label: cardBackPending ? 'Use as card back' : 'Add to study set…', onClick: () => onAddToStudySet(selected), title: 'Make a flashcard from the selection' };
+      // While a card waits for its back, finishing it is the first thing offered.
+      if (cardBackPending) moreActions.unshift(add);
+      else moreActions.push(add);
+    }
   }
   if (inkLayout) {
     moreActions.unshift(

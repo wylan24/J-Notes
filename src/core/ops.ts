@@ -1,5 +1,5 @@
 import { invert, transformStroke, type Matrix } from './transform';
-import { normalizePage, type DocPatch, type ItemPatch, type NotebookDoc, type Page, type PageItem, type PagePatch, type Recording, type Stroke } from './model';
+import { normalizePage, type CardPatch, type DocPatch, type ItemPatch, type NotebookDoc, type Page, type PageItem, type PagePatch, type Recording, type StudyCard, type Stroke } from './model';
 
 /**
  * Every change to a notebook is one of these operations. Ops carry enough data
@@ -31,6 +31,11 @@ export type DocOp =
   | { type: 'items.updated'; pageId: string; id: string; patch: ItemPatch; previous: ItemPatch }
   /** Change notebook-level fields (bookmarks). `previous` holds the old values (undefined = absent). */
   | { type: 'doc.updated'; patch: DocPatch; previous: DocPatch }
+  /** Flashcards added to a study set, at `indices` when undoing a removal, else at the end. */
+  | { type: 'cards.added'; cards: StudyCard[]; indices?: number[] }
+  | { type: 'cards.removed'; cards: StudyCard[]; indices: number[] }
+  /** `previous` holds the old value of every patched field (undefined where the field was absent). */
+  | { type: 'cards.updated'; id: string; patch: CardPatch; previous: CardPatch }
   | { type: 'recording.added'; recording: Recording; index?: number }
   | { type: 'recording.removed'; recording: Recording; index: number };
 
@@ -151,6 +156,14 @@ export function applyOp(doc: NotebookDoc, op: DocOp): NotebookDoc {
       const ids = new Set(op.items.map((it) => it.id));
       return updatePage(doc, op.pageId, (page) => ({ ...page, items: page.items.filter((it) => !ids.has(it.id)) }));
     }
+    case 'cards.added':
+      return { ...doc, cards: insertAt(doc.cards ?? [], op.cards, op.indices) };
+    case 'cards.removed': {
+      const ids = new Set(op.cards.map((c) => c.id));
+      return { ...doc, cards: (doc.cards ?? []).filter((c) => !ids.has(c.id)) };
+    }
+    case 'cards.updated':
+      return { ...doc, cards: (doc.cards ?? []).map((c) => (c.id === op.id ? patchFields(c, op.patch) : c)) };
     case 'recording.added':
       return { ...doc, recordings: insertAt(doc.recordings ?? [], [op.recording], op.index === undefined ? undefined : [op.index]) };
     case 'recording.removed':
@@ -195,6 +208,12 @@ export function inverseOp(op: DocOp): DocOp {
     case 'items.removed':
       return { type: 'items.added', pageId: op.pageId, items: op.items, indices: op.indices.length ? op.indices : undefined };
     case 'items.updated':
+      return { ...op, patch: op.previous, previous: op.patch };
+    case 'cards.added':
+      return { type: 'cards.removed', cards: op.cards, indices: op.indices ?? [] };
+    case 'cards.removed':
+      return { type: 'cards.added', cards: op.cards, indices: op.indices.length ? op.indices : undefined };
+    case 'cards.updated':
       return { ...op, patch: op.previous, previous: op.patch };
     case 'recording.added':
       return { type: 'recording.removed', recording: op.recording, index: op.index ?? -1 };

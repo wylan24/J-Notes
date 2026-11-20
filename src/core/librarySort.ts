@@ -8,7 +8,7 @@ export type LibraryView = 'grid' | 'list';
 
 /** Which kinds of document the library shows. */
 export type KindFilter = 'all' | DocKind;
-export const KIND_FILTERS: readonly KindFilter[] = ['all', 'notebook', 'whiteboard', 'text'];
+export const KIND_FILTERS: readonly KindFilter[] = ['all', 'notebook', 'whiteboard', 'text', 'deck'];
 
 export interface LibraryPrefs {
   sort: SortKey;
