@@ -150,6 +150,11 @@ Size: S = 1–2 files, M = 3–5 files.
 
 - [ ] **12.1 Deploy (S)** — free static hosting (Cloudflare Pages or GitHub Pages) with a GitHub Actions workflow that runs tests and build before deploying. Can be pulled forward once 8.5 is done.
   - Accept: the hosted URL installs as a PWA on iPad and works offline.
+  - Built: GitHub Pages at https://wylan24.github.io/J-Notes/. `.github/workflows/deploy.yml` tests and builds every
+    push and pull request and deploys `main`. The app now runs from a subfolder: Vite's `base` comes from `BASE_PATH`,
+    the manifest uses relative paths, and the service worker registers, precaches and serves the shell under the
+    base and leaves the rest of the github.io origin alone. **Left to check:** first deploy from `main`, then install
+    on the iPad and open it offline.
 - [ ] **12.2 Google sign-in (M)** — Google Identity Services; scopes `openid email profile drive.appdata` only; signed-out mode unchanged.
   - Accept: sign in, reload, still signed in; sign out leaves local notebooks intact; no backend involved.
 - [ ] **12.3 Drive sync of notebooks (M)** — upload event batches, snapshots and blobs to the app data folder; pull and merge on open and on focus.

@@ -21,6 +21,15 @@ describe('the offline cache', () => {
     ]);
   });
 
+  it('puts every file under the base path when the app is served from a subfolder', () => {
+    const urls = precacheUrls(bundle, pub, '/J-Notes/');
+    expect(urls[0]).toBe('/J-Notes/');
+    expect(urls).toContain('/J-Notes/index.html');
+    expect(urls).toContain('/J-Notes/assets/main-ab.js');
+    expect(urls).toContain('/J-Notes/icons/maskable-512.png');
+    expect(urls.every((u) => u.startsWith('/J-Notes/'))).toBe(true);
+  });
+
   it('gets a new version whenever a file changes', () => {
     const a = precacheUrls(bundle, pub);
     const b = precacheUrls(bundle.map((f) => f.replace('main-ab', 'main-zz')), pub);
@@ -36,5 +45,17 @@ describe('the offline cache', () => {
     expect(routeFor({ method: 'GET', url: `${origin}/other.json` }, origin, cached)).toBe('network-first');
     expect(routeFor({ method: 'GET', url: 'https://fonts.example/x.woff2' }, origin, cached)).toBe('pass');
     expect(routeFor({ method: 'POST', url: `${origin}/assets/main-ab.js` }, origin, cached)).toBe('pass');
+  });
+
+  it('only answers requests inside its own folder when served from one', () => {
+    const origin = 'https://someone.github.io';
+    const cached = new Set(['/J-Notes/assets/main-ab.js']);
+    const base = '/J-Notes/';
+    expect(routeFor({ method: 'GET', url: `${origin}/J-Notes/#/n/abc`, mode: 'navigate' }, origin, cached, base)).toBe('shell');
+    expect(routeFor({ method: 'GET', url: `${origin}/J-Notes/assets/main-ab.js` }, origin, cached, base)).toBe('cache-first');
+    expect(routeFor({ method: 'GET', url: `${origin}/J-Notes/other.json` }, origin, cached, base)).toBe('network-first');
+    // Another site on the same github.io origin is none of its business.
+    expect(routeFor({ method: 'GET', url: `${origin}/other-app/`, mode: 'navigate' }, origin, cached, base)).toBe('pass');
+    expect(routeFor({ method: 'GET', url: `${origin}/other-app/main.js` }, origin, cached, base)).toBe('pass');
   });
 });

@@ -21,7 +21,7 @@ interface Worker {
 }
 
 const sw = self as unknown as Worker;
-const { version, urls } = sw.__JNOTES_PRECACHE__;
+const { version, base, urls } = sw.__JNOTES_PRECACHE__;
 const CACHE = `jnotes-${version}`;
 const precached = new Set(urls);
 
@@ -45,10 +45,10 @@ sw.addEventListener('activate', (e) => {
 });
 
 sw.addEventListener('fetch', (e) => {
-  const route = routeFor(e.request, sw.location.origin, precached);
+  const route = routeFor(e.request, sw.location.origin, precached, base);
   if (route === 'pass') return;
   if (route === 'shell') {
-    e.respondWith(caches.match('/index.html', { cacheName: CACHE }).then((r) => r ?? fetch(e.request)));
+    e.respondWith(caches.match(`${base}index.html`, { cacheName: CACHE }).then((r) => r ?? fetch(e.request)));
   } else if (route === 'cache-first') {
     e.respondWith(caches.match(e.request, { cacheName: CACHE }).then((r) => r ?? fetch(e.request)));
   } else {

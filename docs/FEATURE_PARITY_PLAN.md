@@ -357,4 +357,5 @@ Resolved 2026-11-18: host later with Google sign-in, no API-based AI, no paid se
 1. **Collaboration engine:** Yjs (pairs with TipTap) or Automerge (closer to what Goodnotes uses)? Needed by Phase 13.
 2. **Relay for live editing:** Supabase free tier, a Cloudflare Worker, or peer-to-peer? Needed by Phase 13.
 3. **Is matching Restyle and Math Assist a goal**, or is "convert to text" enough handwriting intelligence?
-4. **Hosting provider and domain:** Cloudflare Pages or GitHub Pages, and on a free subdomain or your own domain?
+4. ~~**Hosting provider and domain:** Cloudflare Pages or GitHub Pages, and on a free subdomain or your own domain?~~
+   Decided: GitHub Pages on the free subdomain, https://wylan24.github.io/J-Notes/.

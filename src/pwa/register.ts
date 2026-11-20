@@ -65,7 +65,7 @@ export function setUpPwa(): void {
         worker.postMessage('skip-waiting');
       },
     });
-  void navigator.serviceWorker.register('/sw.js').then((reg) => {
+  void navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).then((reg) => {
     if (reg.waiting && navigator.serviceWorker.controller) offer(reg.waiting);
     reg.addEventListener('updatefound', () => {
       const worker = reg.installing;
