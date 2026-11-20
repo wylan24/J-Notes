@@ -94,7 +94,7 @@ describe('signing in and out', () => {
     const g = await signInRoundTrip();
     g.signOut();
     expect(localStorage.getItem('jnotes.account')).toBeNull();
-    expect(sessionStorage.getItem('jnotes.googleToken')).toBeNull();
+    expect(localStorage.getItem('jnotes.googleToken')).toBeNull();
     expect(g.accessToken()).toBeNull();
     expect(localStorage.getItem('jnotes.penOnly')).toBe('true');
     const reloaded = await load();

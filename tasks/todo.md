@@ -163,6 +163,18 @@ Size: S = 1–2 files, M = 3–5 files.
     is hidden. **Left to check:** create the client, then sign in on the hosted app and the iPad.
 - [ ] **12.3 Drive sync of notebooks (M)** — upload event batches, snapshots and blobs to the app data folder; pull and merge on open and on focus.
   - Accept: edit on two devices offline, reconnect, both converge with no lost strokes (merge logic unit-tested with fake Drive).
+  - Built: `core/sync.ts` (pure) and `sync/engine.ts`. Each device uploads its own edits as immutable batches
+    (`n.<doc>.log.<device>.<from>-<to>.json`), pictures once each, and now and then a snapshot with a version vector.
+    Every device starts from the snapshot covering the most edits and applies the rest in one order (Lamport clock,
+    then device, then seq), so the same files give the same notebook. Edits not yet uploaded survive compaction;
+    an open notebook takes in changes through `Persister.rebase` without losing unsaved edits. Deleting a synced
+    notebook leaves a marker so other devices delete it too. Notebooks made on another device are downloaded.
+    Syncs on start, on focus, on coming online, on opening and closing a notebook, and 15 s after edits; status in
+    the library header and Settings › Account. Tests: 15 with a fake Drive (two and three devices, offline edits,
+    random interleavings) and 6 on IndexedDB, including this browser against a second device.
+  - Limits: Drive access lasts an hour and renewing it needs a trip to Google, so sync pauses with Reconnect.
+    Text documents edited on two devices at once keep the later version. Titles, folders and trash are 12.4.
+    **Left to check:** two real devices once the OAuth client exists.
 - [ ] **12.4 Sync library, folders, elements and settings (S)** Depends: 12.3
 - [ ] **12.5 First run on a new device; sign-out options (S)** — download all, progress UI; "keep local copies" choice. Depends: 12.3
 

@@ -24,6 +24,8 @@ import { SettingsDialog } from './Settings';
 import { summaryCounts } from '../core/study';
 import { usePwa } from '../pwa/register';
 import { storedSettings, storeSettings, type EditorSettings } from './settingsStore';
+import { SYNCED_EVENT, useSyncStatus } from '../sync';
+import { signIn } from '../auth/google';
 
 const KIND_LABELS: Record<KindFilter, string> = { all: 'Everything', notebook: 'Notebooks', whiteboard: 'Whiteboards', text: 'Documents', deck: 'Study sets' };
 
@@ -120,6 +122,13 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
     void editorClosed()
       .then(() => sweepQuicknotes())
       .then((removed) => removed && refresh());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Notebooks changed, added or removed by sync.
+  useEffect(() => {
+    const on = () => refresh();
+    window.addEventListener(SYNCED_EVENT, on);
+    return () => window.removeEventListener(SYNCED_EVENT, on);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -330,6 +339,7 @@ export function Library({ onOpen }: { onOpen: (id: string) => void }) {
               Install
             </button>
           )}
+          <SyncIndicator onOpenSettings={() => setSettings(storedSettings())} />
           <button className="icon-btn" onClick={() => setSettings(storedSettings())} aria-label="Settings" title="Settings">
             <Icon name="settings" />
           </button>
@@ -695,4 +705,23 @@ function NewNotebookDialog({ onCancel, onCreate }: { onCancel: () => void; onCre
       </form>
     </div>
   );
+}
+
+/** How Drive sync is going, shown only when there is something to see or do. */
+function SyncIndicator({ onOpenSettings }: { onOpenSettings: () => void }) {
+  const { state } = useSyncStatus();
+  if (state === 'syncing') return <span className="sync-chip" role="status">Syncing…</span>;
+  if (state === 'reconnect')
+    return (
+      <button className="btn ghost sync-chip" onClick={signIn} title="Google Drive access lasts an hour; reconnect to carry on syncing">
+        Sync paused · Reconnect
+      </button>
+    );
+  if (state === 'error' || state === 'no-drive')
+    return (
+      <button className="btn ghost sync-chip warn" onClick={onOpenSettings}>
+        Sync problem
+      </button>
+    );
+  return null;
 }

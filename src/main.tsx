@@ -5,11 +5,14 @@ import './ui/styles.css';
 import { applyTheme } from './ui/theme';
 import { setUpPwa } from './pwa/register';
 import { completeSignIn } from './auth/google';
+import { setUpSync } from './sync';
 
 // Light or dark as chosen, before anything is drawn.
 applyTheme();
 // Coming back from Google's sign-in page: read the result out of the address before routing.
 completeSignIn();
+// Drive sync, when signed in.
+setUpSync();
 // Offline support, updates and the install prompt.
 setUpPwa();
 

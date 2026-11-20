@@ -1,7 +1,20 @@
-import type { DocEvent } from '../core/ops';
+import { replay, type DocEvent } from '../core/ops';
+import type { NotebookDoc } from '../core/model';
 import type { DocumentStore } from '../core/store';
-import { appendEvents, compact } from './db';
+import { appendEvents, compact, eventsAfter } from './db';
 import { deckSummary } from '../core/study';
+
+/** What sync wants to hear about open notebooks: opened, saved after an edit, closed. */
+export interface PersisterHooks {
+  opened(docId: string): void;
+  saved(docId: string): void;
+  closed(docId: string): void;
+}
+let hooks: PersisterHooks | null = null;
+export const setPersisterHooks = (h: PersisterHooks | null): void => void (hooks = h);
+
+/** The persister of each open notebook, so sync can bring in changes from other devices. */
+export const openPersisters = new Map<string, Persister>();
 
 export type SaveStatus = 'saved' | 'pending' | 'saving' | 'error';
 
@@ -31,6 +44,34 @@ export class Persister {
       this.setStatus('pending');
       this.schedule();
     });
+    openPersisters.set(store.doc.id, this);
+    hooks?.opened(store.doc.id);
+  }
+
+  /** The notebook open here, and the seq of its last edit (saved or not). */
+  get state(): { doc: NotebookDoc; seq: number } {
+    return { doc: this.store.doc, seq: this.store.seq };
+  }
+
+  /**
+   * Bring in the notebook as worked out by sync (`merged`) and put this device's edits after
+   * `uploaded` back on top, including any made while the sync ran. Runs in turn with saving, so
+   * no save happens halfway through.
+   */
+  rebase(merged: NotebookDoc, uploaded: number): Promise<void> {
+    const docId = this.store.doc.id;
+    this.chain = this.chain.then(async () => {
+      const saved = await eventsAfter(docId, uploaded);
+      // Read the queue only now: edits made while the saved ones loaded are in it.
+      const unsaved = this.queue.filter((e) => e.seq > uploaded && !saved.some((s) => s.seq === e.seq));
+      this.store.replaceDoc(replay(merged, [...saved, ...unsaved]));
+      // A snapshot of exactly what is on screen, at the latest seq (unsaved edits included: they
+      // are saved next, after it, and so aren't replayed twice).
+      const seq = this.store.seq;
+      await compact(docId, this.store.doc, seq);
+      this.snapshotSeq = seq;
+    });
+    return this.chain;
   }
 
   private schedule(): void {
@@ -73,6 +114,7 @@ export class Persister {
       }
       this.setStatus(this.queue.length ? 'pending' : 'saved');
       this.afterFlush?.();
+      hooks?.saved(docId);
     } catch (err) {
       console.error('Failed to persist events', err);
       this.queue.unshift(...batch); // keep them; retry on next flush
@@ -83,5 +125,10 @@ export class Persister {
   async dispose(): Promise<void> {
     await this.flush();
     this.unsubscribe();
+    const docId = this.store.doc.id;
+    if (openPersisters.get(docId) === this) {
+      openPersisters.delete(docId);
+      hooks?.closed(docId);
+    }
   }
 }
