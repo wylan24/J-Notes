@@ -4,6 +4,10 @@ import { applyOp, replay, type DocEvent, type DocOp } from '../src/core/ops';
 import type { NotebookDoc, NotebookMeta, Stroke } from '../src/core/model';
 import { DriveAuthError, type Drive, type DriveFile } from '../src/sync/drive';
 import { syncNotebooks, type LocalNotebooks, type SyncRecord } from '../src/sync/engine';
+import type { Folder } from '../src/core/model';
+import type { SavedElement } from '../src/core/elements';
+import { keys, parseKey, SYNCED_META_FIELDS, SYNCED_SETTINGS, type Entry } from '../src/core/librarySync';
+import { syncLibrary, type LocalLibrary } from '../src/sync/library';
 
 export class FakeDrive implements Drive {
   files = new Map<string, { file: DriveFile; bytes: ArrayBuffer }>();
@@ -188,3 +192,69 @@ export class Device implements LocalNotebooks {
 }
 
 export const stroke = (id: string): Stroke => ({ id, tool: 'pen', color: '#000', width: 2, simulatePressure: false, points: [{ x: 1, y: 1, p: 0.5 }, { x: 2, y: 2, p: 0.5 }] });
+
+// --- Library, elements and settings ---
+
+
+/** A device's library in memory: notebook metas, folders, elements and settings. */
+export class Library implements LocalLibrary {
+  metas = new Map<string, NotebookMeta>();
+  folders = new Map<string, Folder>();
+  elements = new Map<string, SavedElement>();
+  settings = new Map<string, unknown>();
+  private led = new Map<string, Entry>();
+  private fileCache = new Map<string, { version: string; value: unknown }>();
+  now = 1000;
+
+  constructor(
+    readonly id: string,
+    readonly drive: Drive,
+  ) {}
+
+  sync() {
+    return syncLibrary({ drive: this.drive, local: this, device: this.id, now: (this.now += 10) });
+  }
+
+  addNotebook(id: string, patch: Partial<NotebookMeta> = {}) {
+    this.metas.set(id, { id, title: 'Untitled', cover: '#333', template: 'blank', createdAt: 1, updatedAt: 1, favourite: false, trashedAt: null, pageCount: 1, ...patch });
+  }
+
+  async values() {
+    const out = new Map<string, unknown>();
+    for (const m of this.metas.values()) for (const f of SYNCED_META_FIELDS) out.set(keys.meta(m.id, f), m[f] ?? null);
+    for (const f of this.folders.values()) out.set(keys.folder(f.id), f);
+    for (const e of this.elements.values()) out.set(keys.element(e.id), { name: e.name, createdAt: e.createdAt });
+    for (const k of SYNCED_SETTINGS) if (this.settings.has(k)) out.set(keys.setting(k), this.settings.get(k));
+    return out;
+  }
+  async set(key: string, v: unknown) {
+    const p = parseKey(key)!;
+    if (p.kind === 'meta') {
+      const m = this.metas.get(p.docId)!;
+      this.metas.set(p.docId, { ...m, [p.field]: p.field === 'trashedAt' ? v : (v ?? undefined) });
+    } else if (p.kind === 'folder') v === null ? this.folders.delete(p.id) : this.folders.set(p.id, v as Folder);
+    else if (p.kind === 'element') {
+      if (v === null) this.elements.delete(p.id);
+      else this.elements.set(p.id, { ...this.elements.get(p.id)!, ...(v as object) });
+    } else v === null ? this.settings.delete(p.key) : this.settings.set(p.key, v);
+  }
+  async ledger() {
+    return new Map(this.led);
+  }
+  async setLedger(l: Map<string, Entry>) {
+    this.led = new Map(l);
+  }
+  async element(id: string) {
+    return this.elements.get(id);
+  }
+  async addElement(el: SavedElement) {
+    this.elements.set(el.id, el);
+  }
+  async cached<T>(name: string, version: string) {
+    const c = this.fileCache.get(name);
+    return c && c.version === version ? (structuredClone(c.value) as T) : undefined;
+  }
+  async cache(name: string, version: string, value: unknown) {
+    this.fileCache.set(name, { version, value: structuredClone(value) });
+  }
+}

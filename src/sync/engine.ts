@@ -90,11 +90,19 @@ function groupFiles(files: DriveFile[]): Map<string, DriveNotebook> {
   return out;
 }
 
-export async function syncNotebooks(o: { drive: Drive; local: LocalNotebooks; device: string; only?: string; snapshotEvery?: number }): Promise<SyncResult> {
+export async function syncNotebooks(o: {
+  drive: Drive;
+  local: LocalNotebooks;
+  device: string;
+  only?: string;
+  snapshotEvery?: number;
+  /** The folder's listing, if already fetched. */
+  files?: DriveFile[];
+}): Promise<SyncResult> {
   const { drive, local, device } = o;
   const snapshotEvery = o.snapshotEvery ?? SNAPSHOT_EVERY;
   const result: SyncResult = { changed: [], failed: [] };
-  const groups = groupFiles(await drive.list());
+  const groups = groupFiles(o.files ?? (await drive.list()));
   const metas = new Map((await local.list()).map((m) => [m.id, m]));
 
   /** A JSON file, from the cache when this version was downloaded before. */

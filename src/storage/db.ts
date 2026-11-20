@@ -357,6 +357,14 @@ export async function putFolder(folder: Folder): Promise<void> {
   await done(tx);
 }
 
+/** Remove just the folder record (deleted on another device; its notebooks' moves sync on their own). */
+export async function removeFolderRecord(id: string): Promise<void> {
+  const db = await openDb();
+  const tx = db.transaction('folders', 'readwrite');
+  tx.objectStore('folders').delete(id);
+  await done(tx);
+}
+
 /** File a notebook in a folder, or at the top level with null. */
 export async function moveNotebook(id: string, folderId: string | null): Promise<void> {
   const db = await openDb();

@@ -176,6 +176,16 @@ Size: S = 1–2 files, M = 3–5 files.
     Text documents edited on two devices at once keep the later version. Titles, folders and trash are 12.4.
     **Left to check:** two real devices once the OAuth client exists.
 - [ ] **12.4 Sync library, folders, elements and settings (S)** Depends: 12.3
+  - Built: `core/librarySync.ts` (pure) and `sync/library.ts`. Each library value is an entry (a notebook's title,
+    cover, cover image, favourite, trash, folder, lock and default template; each folder; each saved element; each
+    synced setting), and the latest change to an entry wins (a clock that never goes backwards, then device). Each
+    device keeps its own file of the entries it changed (`lib.<device>.json`); elements' photos go in
+    `el.<id>.json`. Changes are found by comparing with what was last synced, so no screen reports them. A value
+    never synced on a device takes the value from elsewhere, so a notebook just downloaded or a device signing in
+    for the first time doesn't overwrite what was set elsewhere. Synced settings: presets, ink, colours, swatches,
+    toolbar, eraser, lasso, snap, scroll, scribble to erase, read-only notebooks, spellcheck words, library sort.
+    Per device: stylus only, theme, handwriting recognition, zoom, tabs, sidebar. Runs after notebooks each round.
+  - Limits: settings changed on another device take effect when the screen using them next opens.
 - [ ] **12.5 First run on a new device; sign-out options (S)** — download all, progress UI; "keep local copies" choice. Depends: 12.3
 
 ## Phase 13: Sharing and collaboration (free relay; blocked on open questions 1–2)
