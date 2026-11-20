@@ -25,11 +25,13 @@ function filesIn(dir: string): string[] {
  */
 function serviceWorker(): Plugin {
   let publicDir = 'public';
+  let base = '/';
   return {
     name: 'jnotes-service-worker',
     apply: 'build',
     configResolved(c) {
       publicDir = c.publicDir;
+      base = c.base;
     },
     generateBundle(_opts, bundle) {
       const sw = bundle['sw.js'];
@@ -37,8 +39,9 @@ function serviceWorker(): Plugin {
       const urls = precacheUrls(
         Object.keys(bundle),
         filesIn(publicDir).map((f) => relative('.', f)),
+        base,
       );
-      sw.code = `self.__JNOTES_PRECACHE__=${JSON.stringify({ version: precacheVersion(urls), urls })};\n${sw.code}`;
+      sw.code = `self.__JNOTES_PRECACHE__=${JSON.stringify({ version: precacheVersion(urls), base, urls })};\n${sw.code}`;
     },
   };
 }
@@ -60,6 +63,9 @@ function dropOrtWasm(): Plugin {
 }
 
 export default defineConfig({
+  // Where the app is served from. GitHub Pages serves it from /J-Notes/ (set by the deploy workflow);
+  // everything else (dev server, `npm run preview`) serves it from the root.
+  base: process.env.BASE_PATH ?? '/',
   // `npm run spike` serves over HTTPS (a self-signed certificate) for the handwriting spike.
   plugins: [react(), dropOrtWasm(), serviceWorker(), hwrSpike(), ...(process.env.HWR_HTTPS ? [basicSsl()] : [])],
   // The handwriting worker loads its model code on demand, so it is built as a module (Safari 15+).

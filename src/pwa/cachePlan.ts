@@ -4,6 +4,8 @@
 /** The build's files, and a version that changes whenever any of them does. */
 export interface Precache {
   version: string;
+  /** Where the app is served from, e.g. "/" or "/J-Notes/" (always ends in a slash). */
+  base: string;
   /** Absolute paths, e.g. "/assets/index-ab12.js". */
   urls: string[];
 }
@@ -39,10 +41,16 @@ export type Route = 'shell' | 'cache-first' | 'network-first' | 'pass';
 
 /**
  * How to answer a request. Pages (the app uses hash routing, so there is only one) come from the
- * cached shell; precached files from the cache; other same-origin GETs from the network, falling
- * back to the cache; anything else (other sites, uploads) is left alone.
+ * cached shell; precached files from the cache; other GETs under the app's base path from the
+ * network, falling back to the cache; anything else (other sites, other apps sharing the origin,
+ * uploads) is left alone.
  */
-export function routeFor(req: { method: string; url: string; mode?: string }, origin: string, precached: ReadonlySet<string>): Route {
+export function routeFor(
+  req: { method: string; url: string; mode?: string },
+  origin: string,
+  precached: ReadonlySet<string>,
+  base = '/',
+): Route {
   if (req.method !== 'GET') return 'pass';
   let u: URL;
   try {
@@ -50,7 +58,7 @@ export function routeFor(req: { method: string; url: string; mode?: string }, or
   } catch {
     return 'pass';
   }
-  if (u.origin !== origin) return 'pass';
+  if (u.origin !== origin || !u.pathname.startsWith(base)) return 'pass';
   if (req.mode === 'navigate') return 'shell';
   if (precached.has(u.pathname)) return 'cache-first';
   return 'network-first';
