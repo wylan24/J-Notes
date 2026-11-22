@@ -154,7 +154,7 @@ Size: S = 1–2 files, M = 3–5 files.
     push and pull request and deploys `main`. The app now runs from a subfolder: Vite's `base` comes from `BASE_PATH`,
     the manifest uses relative paths, and the service worker registers, precaches and serves the shell under the
     base and leaves the rest of the github.io origin alone. Installed from Safari on the iPad and opens offline.
-- [ ] **12.2 Google sign-in (M)** — Google Identity Services; scopes `openid email profile drive.appdata` only; signed-out mode unchanged.
+- [x] **12.2 Google sign-in (M)** — Google Identity Services; scopes `openid email profile drive.appdata` only; signed-out mode unchanged.
   - Accept: sign in, reload, still signed in; sign out leaves local notebooks intact; no backend involved.
   - Built: Settings › Account. Sign-in redirects to Google and back (OAuth implicit flow, `token id_token`), not a
     popup, so it works in the iPad home-screen app; `core/account.ts` checks state, nonce, audience, issuer and
@@ -162,7 +162,9 @@ Size: S = 1–2 files, M = 3–5 files.
     revokes the token and touches nothing else. Needs an OAuth client (README › Google sign-in); unset, sign-in
     is hidden. Client created (repository variable `GOOGLE_CLIENT_ID`; `.env.local` for dev); Google accepts
     both redirect addresses, and Drive allows every request sync makes from the app's origin (checked by
-    preflight). **Left to check:** sign in on the hosted app and the iPad.
+    preflight). Done on the hosted app: signs in (account added as a test user while the app is in Testing),
+    stays signed in across reloads, first sync uploads; signing out with Remove from this device and back in
+    downloads the notebook again.
 - [ ] **12.3 Drive sync of notebooks (M)** — upload event batches, snapshots and blobs to the app data folder; pull and merge on open and on focus.
   - Accept: edit on two devices offline, reconnect, both converge with no lost strokes (merge logic unit-tested with fake Drive).
   - Built: `core/sync.ts` (pure) and `sync/engine.ts`. Each device uploads its own edits as immutable batches
