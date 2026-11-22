@@ -1,5 +1,6 @@
 import { invert, transformStroke, type Matrix } from './transform';
-import { normalizePage, type CardPatch, type DocPatch, type ItemPatch, type NotebookDoc, type Page, type PageItem, type PagePatch, type Recording, type StudyCard, type Stroke } from './model';
+import { mergeTextState } from './textSync';
+import { normalizePage, type CardPatch, type DocPatch, type ItemPatch, type NotebookDoc, type Page, type PageItem, type PagePatch, type Recording, type StudyCard, type Stroke, type TextDocNode } from './model';
 
 /**
  * Every change to a notebook is one of these operations. Ops carry enough data
@@ -36,6 +37,12 @@ export type DocOp =
   | { type: 'cards.removed'; cards: StudyCard[]; indices: number[] }
   /** `previous` holds the old value of every patched field (undefined where the field was absent). */
   | { type: 'cards.updated'; id: string; patch: CardPatch; previous: CardPatch }
+  /**
+   * Typing in a text document: a Yjs update (base64) merged into `textState`, and the editor's
+   * content as JSON to keep `text` (the copy for search and previews) current. Merging is
+   * idempotent, so it is its own inverse; text documents undo with the editor's own history.
+   */
+  | { type: 'text.yjs'; update: string; text?: TextDocNode }
   | { type: 'recording.added'; recording: Recording; index?: number }
   | { type: 'recording.removed'; recording: Recording; index: number };
 
@@ -169,6 +176,8 @@ export function applyOp(doc: NotebookDoc, op: DocOp): NotebookDoc {
     }
     case 'cards.updated':
       return { ...doc, cards: (doc.cards ?? []).map((c) => (c.id === op.id ? patchFields(c, op.patch) : c)) };
+    case 'text.yjs':
+      return { ...doc, textState: mergeTextState(doc.textState, op.update), ...(op.text ? { text: op.text } : {}) };
     case 'recording.added':
       return { ...doc, recordings: insertAt(doc.recordings ?? [], [op.recording], op.index === undefined ? undefined : [op.index]) };
     case 'recording.removed':
@@ -220,6 +229,8 @@ export function inverseOp(op: DocOp): DocOp {
       return { type: 'cards.added', cards: op.cards, indices: op.indices.length ? op.indices : undefined };
     case 'cards.updated':
       return { ...op, patch: op.previous, previous: op.patch };
+    case 'text.yjs':
+      return op;
     case 'recording.added':
       return { type: 'recording.removed', recording: op.recording, index: op.index ?? -1 };
     case 'recording.removed':

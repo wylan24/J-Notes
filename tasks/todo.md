@@ -221,6 +221,16 @@ Cloudflare Worker with a Durable Object per shared notebook (free tier).
   device, so two devices converting one document don't duplicate it.
   - Accept: two devices typing offline in the same paragraph both keep their text after Drive sync; old documents
     open unchanged.
+  - Built: `doc.textState` (Yjs, base64) is the content; `text.yjs` ops merge an update into it (idempotent, so its own
+    inverse) and carry the JSON copy kept for search, thumbnails and export. `text/yText.ts` holds the editor's
+    extensions and `openTextYDoc`, which converts an old document as Yjs client 0 so every device converting it
+    makes the same items. The editor uses TipTap Collaboration (undo only undoes your own typing), saves each burst
+    of typing as one op, and merges typing synced from elsewhere into the open document. Images show from each
+    device's own blob copy instead of a stored URL. `.jnotes.json` keeps `textState`.
+  - Tests: old documents open with the same text; two devices converting one document make identical updates, kept
+    once; two devices typing offline in one paragraph both keep their text after Drive sync, also when both convert
+    it offline first; export and import keep it. Checked in jsdom: open, remote merge, typing, undo.
+  - Cost: Yjs is in the main bundle (+27 kB gzipped), because edits are replayed outside the text editor.
 - [ ] **13.3 Relay (M)** — `relay/`: a Worker with one Durable Object per shared notebook (WebSocket rooms with
   hibernation, storage for the encrypted shared copy); deployed from GitHub Actions. Needs a Cloudflare account and
   an API token (repository secret).

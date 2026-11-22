@@ -390,6 +390,12 @@ export interface NotebookDoc {
    * the blob store by `blobId`. Absent for notebooks and whiteboards.
    */
   text?: TextDocNode;
+  /**
+   * A text document's content as a Yjs document (base64), the source of truth once it exists;
+   * `text` is then a copy of it for search, thumbnails and export. Absent on documents not yet
+   * opened since collaboration arrived (they convert on opening).
+   */
+  textState?: string;
   /** A study set's flashcards, in the order they were made. Absent for other documents. */
   cards?: StudyCard[];
   /** A study set's review history, one entry per day studied, oldest first. Absent until studied. */
