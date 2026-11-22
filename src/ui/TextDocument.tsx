@@ -1,18 +1,18 @@
 // The text document editor: typed documents with headings, lists, checklists, tables and images.
-// Loaded only when a text document is opened. Content is saved through the document store as
-// `doc.updated` ops (debounced), so it is logged and persisted like everything else.
+// Loaded only when a text document is opened. The content is a Yjs document (TipTap
+// Collaboration), so typing on other devices merges in rather than replacing it. Each burst of
+// typing is saved through the document store as one `text.yjs` op, logged and synced like any edit.
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { Editor } from '@tiptap/core';
-import StarterKit from '@tiptap/starter-kit';
-import Highlight from '@tiptap/extension-highlight';
-import Image from '@tiptap/extension-image';
-import { TaskItem, TaskList } from '@tiptap/extension-list';
-import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
+import Collaboration from '@tiptap/extension-collaboration';
+import * as Y from 'yjs';
 import type { NotebookMeta, TextDocNode } from '../core/model';
 import type { DocumentStore } from '../core/store';
-import { updateDocOp } from '../core/ops';
 import { newId } from '../core/ids';
-import { EMPTY_TEXT_DOC, forStorage, textDocBlobIds, textDocLines, textDocPlain, withImageSources } from '../core/textDoc';
+import { canonical } from '../core/librarySync';
+import { forStorage, textDocBlobIds, textDocLines, textDocPlain } from '../core/textDoc';
+import { fromBase64, toBase64 } from '../core/textSync';
+import { openTextYDoc, setImageUrls, textExtensions } from '../text/yText';
 import { HIGHLIGHT } from '../core/richText';
 import { getBlobs, putBlob, updateMeta } from '../storage/db';
 import { Persister, type SaveStatus } from '../storage/persister';
@@ -25,15 +25,8 @@ import { Icon } from './icons';
 /** Typing settles for this long before it is saved as one change. */
 const SAVE_DELAY_MS = 600;
 
-/** An image node that keeps the blob it came from, so the document can be stored without object URLs. */
-const StoredImage = Image.extend({
-  addAttributes() {
-    return {
-      ...this.parent?.(),
-      blobId: { default: null, renderHTML: () => ({}), parseHTML: () => null },
-    };
-  },
-});
+/** Marks Yjs changes that came from elsewhere (sync), so they aren't logged again as typing here. */
+const FROM_ELSEWHERE = Symbol('elsewhere');
 
 interface Props {
   store: DocumentStore;
@@ -51,15 +44,18 @@ export default function TextDocument({ store, meta: initialMeta, snapshotSeq, on
   const urls = useRef(new Map<string, string>());
   const imageInput = useRef<HTMLInputElement>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Typing here not yet saved, as Yjs updates. */
+  const unsaved = useRef<Uint8Array[]>([]);
 
-  /** Write the editor's content to the store, if it changed. */
+  /** Save typing so far as one `text.yjs` op, with the content as JSON for search and previews. */
   const save = () => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = null;
     const editor = editorRef.current;
-    if (!editor) return;
-    const op = updateDocOp(store.doc, { text: forStorage(editor.getJSON() as TextDocNode) });
-    if (op) store.dispatch([op]);
+    if (!editor || !unsaved.current.length) return;
+    const update = toBase64(Y.mergeUpdates(unsaved.current));
+    unsaved.current = [];
+    store.dispatch([{ type: 'text.yjs', update, text: forStorage(editor.getJSON() as TextDocNode) }]);
   };
 
   // Persistence, as in the notebook editor: events are batched to storage, with a thumbnail of the first lines.
@@ -99,25 +95,37 @@ export default function TextDocument({ store, meta: initialMeta, snapshotSeq, on
   useEffect(() => {
     let cancelled = false;
     let editor: Editor | null = null;
+    let offStore = () => {};
     const docId = store.doc.id;
-    const stored = store.doc.text ?? EMPTY_TEXT_DOC;
-    void getBlobs(docId, textDocBlobIds(stored)).then((blobs) => {
+    const stored = store.doc.text;
+    // Every picture the document has, including ones added on other devices.
+    void getBlobs(docId).then((blobs) => {
       if (cancelled || !host.current) return;
       for (const b of blobs) urls.current.set(b.id, URL.createObjectURL(new Blob([b.bytes], { type: b.type })));
+      setImageUrls((id) => urls.current.get(id));
+
+      const extensions = textExtensions();
+      const { ydoc, converted } = openTextYDoc(store.doc, extensions);
+      // A document from before collaboration: log its conversion, made the same way on every device.
+      if (converted) store.dispatch([{ type: 'text.yjs', update: converted, ...(stored ? { text: stored } : {}) }]);
+      ydoc.on('update', (update: Uint8Array, origin: unknown) => {
+        if (origin === FROM_ELSEWHERE) return;
+        unsaved.current.push(update);
+        if (saveTimer.current) clearTimeout(saveTimer.current);
+        saveTimer.current = setTimeout(save, SAVE_DELAY_MS);
+      });
+      // Typing that arrives from other devices (sync brings a new state): merge it in.
+      let seen = store.doc.textState;
+      offStore = store.subscribe(() => {
+        const state = store.doc.textState;
+        if (!state || state === seen) return;
+        seen = state;
+        Y.applyUpdate(ydoc, fromBase64(state), FROM_ELSEWHERE);
+      });
+
       editor = new Editor({
         element: host.current,
-        extensions: [
-          StarterKit.configure({ heading: { levels: [1, 2, 3] }, codeBlock: false, link: { openOnClick: false, autolink: true } }),
-          Highlight.configure({ multicolor: true }),
-          TaskList,
-          TaskItem.configure({ nested: true }),
-          Table.configure({ resizable: false }),
-          TableRow,
-          TableHeader,
-          TableCell,
-          StoredImage.configure({ inline: false }),
-        ],
-        content: withImageSources(stored, (id) => urls.current.get(id)),
+        extensions: [...extensions, Collaboration.configure({ document: ydoc })],
         // A new, empty document is ready to type in.
         autofocus: !textDocPlain(stored).trim() && !textDocBlobIds(stored).length ? 'start' : false,
         editorProps: {
@@ -127,17 +135,17 @@ export default function TextDocument({ store, meta: initialMeta, snapshotSeq, on
           handleDrop: (_view, event) => insertImageFiles([...((event as DragEvent).dataTransfer?.files ?? [])]),
         },
         onTransaction: () => refresh(),
-        onUpdate: () => {
-          if (saveTimer.current) clearTimeout(saveTimer.current);
-          saveTimer.current = setTimeout(save, SAVE_DELAY_MS);
-        },
         onBlur: () => save(),
       });
       editorRef.current = editor;
+      // Typing merged in from elsewhere since this device last saved leaves the search copy behind.
+      const json = forStorage(editor.getJSON() as TextDocNode);
+      if (canonical(json) !== canonical(store.doc.text)) store.dispatch([{ type: 'text.yjs', update: '', text: json }]);
       refresh();
     });
     return () => {
       cancelled = true;
+      offStore();
       if (editor) {
         save();
         editorRef.current = null;
@@ -160,7 +168,8 @@ export default function TextDocument({ store, meta: initialMeta, snapshotSeq, on
         await putBlob({ docId: store.doc.id, id, type: file.type, bytes });
         const src = URL.createObjectURL(new Blob([bytes], { type: file.type }));
         urls.current.set(id, src);
-        editorRef.current?.chain().focus().insertContent({ type: 'image', attrs: { src, alt: file.name, blobId: id } }).run();
+        // No src: each device shows the picture from its own copy of the blob.
+        editorRef.current?.chain().focus().insertContent({ type: 'image', attrs: { alt: file.name, blobId: id } }).run();
       }
       save();
     })();

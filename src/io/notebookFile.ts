@@ -80,6 +80,8 @@ export function fromFile(raw: unknown): { meta: NotebookMeta; doc: NotebookDoc; 
       ...(Array.isArray(f.doc.bookmarks) && f.doc.bookmarks.length ? { bookmarks: f.doc.bookmarks.filter((b) => typeof b === 'string') } : {}),
       ...outlineFrom(f.doc.outline),
       ...(f.doc.text && typeof f.doc.text === 'object' && f.doc.text.type === 'doc' ? { text: f.doc.text } : {}),
+      // The text as Yjs, when it has been edited since collaboration arrived (base64 only).
+      ...(typeof f.doc.textState === 'string' && /^[A-Za-z0-9+/]+=*$/.test(f.doc.textState) ? { textState: f.doc.textState } : {}),
       ...cardsFrom(f.doc.cards, f.doc.studyLog),
     }),
     blobs,
