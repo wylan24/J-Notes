@@ -170,9 +170,20 @@ export function lastUploaded(device: string, snapshots: readonly SnapshotFile[],
   return seq;
 }
 
-/** This device's new edits, numbered into the shared order after everything it has seen. */
+/**
+ * This device's new edits, numbered into the shared order after everything it has seen. An edit
+ * already numbered as it was made (shared live) keeps its number, so every collaborator orders it
+ * the same way; numbers only ever rise within a device, so its edits stay in the order it made them.
+ */
 export function stampEdits(events: readonly DocEvent[], seenClock: number): SyncedEvent[] {
-  return [...events].sort((a, b) => a.seq - b.seq).map((e, i) => ({ seq: e.seq, lc: seenClock + 1 + i, ts: e.ts, op: e.op }));
+  let prev = 0;
+  return [...events]
+    .sort((a, b) => a.seq - b.seq)
+    .map((e) => {
+      const lc = Math.max(e.lc ?? seenClock + 1, prev + 1);
+      prev = lc;
+      return { seq: e.seq, lc, ts: e.ts, op: e.op };
+    });
 }
 
 /** The library entry to upload: without what only makes sense on this device. */
