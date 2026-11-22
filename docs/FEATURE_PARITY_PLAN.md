@@ -306,7 +306,7 @@ Start with a one-week spike to pick a model and measure accuracy and speed on an
 - Download everything from Drive on a new device; sign out removes local copies only if the user chooses to.
 
 ### Phase 13: Sharing and collaboration (free relay)
-- Move the document model to a CRDT behind the existing op interface.
+- Apply collaborators' edits live on the existing edit log (it already converges; see Phase 12); text documents on Yjs.
 - Share a notebook by link, view-only first, then edit.
 - Live editing through a free-tier relay, with presence and live cursors.
 
@@ -354,8 +354,11 @@ synced data does not need repeated migrations.
 
 Resolved 2026-11-18: host later with Google sign-in, no API-based AI, no paid services.
 
-1. **Collaboration engine:** Yjs (pairs with TipTap) or Automerge (closer to what Goodnotes uses)? Needed by Phase 13.
-2. **Relay for live editing:** Supabase free tier, a Cloudflare Worker, or peer-to-peer? Needed by Phase 13.
+1. ~~**Collaboration engine:** Yjs (pairs with TipTap) or Automerge (closer to what Goodnotes uses)? Needed by Phase 13.~~
+   Decided: no rewrite. The edit log and merge order from Phase 12 already converge, so ink, pages, shapes and cards
+   keep them; text documents move to Yjs, whose updates travel as ordinary edits.
+2. ~~**Relay for live editing:** Supabase free tier, a Cloudflare Worker, or peer-to-peer? Needed by Phase 13.~~
+   Decided: a Cloudflare Worker with a Durable Object per shared notebook; shared content is end-to-end encrypted.
 3. **Is matching Restyle and Math Assist a goal**, or is "convert to text" enough handwriting intelligence?
 4. ~~**Hosting provider and domain:** Cloudflare Pages or GitHub Pages, and on a free subdomain or your own domain?~~
    Decided: GitHub Pages on the free subdomain, https://wylan24.github.io/J-Notes/.

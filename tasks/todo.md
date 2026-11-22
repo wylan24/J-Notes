@@ -199,11 +199,33 @@ Size: S = 1–2 files, M = 3–5 files.
     uploaded, never synced (quick notes) or open; folders go only when no notebook is kept; preferences stay.
     It forgets what was synced at once, so nothing removed is taken as deleted and removed from Drive.
 
-## Phase 13: Sharing and collaboration (free relay; blocked on open questions 1–2)
+## Phase 13: Sharing and collaboration (Cloudflare Worker relay)
 
-- [ ] **13.1 CRDT document model (M)** — ops translate to CRDT changes; existing tests still pass.
-- [ ] **13.2 Share by link, view only (S)**
-- [ ] **13.3 Live editing on a free relay, presence and cursors (M)**
+Decided (open questions 1–2): no rewrite onto a CRDT library. Ink, pages, shapes and cards keep the edit log and merge
+order from Phase 12, which already converges; collaborators' edits travel live through the relay as well as through
+Drive. Text documents move to Yjs, whose updates merge in any order, carried as ordinary edits. The relay is a
+Cloudflare Worker with a Durable Object per shared notebook (free tier).
+
+- [ ] **13.1 Live edits on the edit log (M)** — `core/live.ts`: take collaborators' edits in any order and keep the
+  notebook in the shared order: apply straight away when an edit sorts last (the usual case), rebuild from the last
+  snapshot when it doesn't. Own edits are numbered after everything seen.
+  - Accept: three participants exchanging edits in random orders and delays end with the same notebook as the Drive
+    merge of the same edits; the in-order case never rebuilds.
+- [ ] **13.2 Text documents on Yjs (M)** — `text.yjs` edits carry Yjs updates; TipTap's Collaboration extension;
+  `doc.text` stays as a cache for search, thumbnails and export. Existing documents convert the same way on every
+  device, so two devices converting one document don't duplicate it.
+  - Accept: two devices typing offline in the same paragraph both keep their text after Drive sync; old documents
+    open unchanged.
+- [ ] **13.3 Relay (M)** — `relay/`: a Worker with one Durable Object per shared notebook (WebSocket rooms with
+  hibernation, storage for the encrypted shared copy); deployed from GitHub Actions. Needs a Cloudflare account and
+  an API token (repository secret).
+  - Accept: two browsers in a room exchange messages; a room with nobody in it costs nothing.
+- [ ] **13.4 Share by link, view only (S)** — the notebook is encrypted in the browser and stored in its room; the link
+  carries the room and the key in its fragment, so the relay never sees the content. Opens read-only, no sign-in.
+  - Accept: the link opens the notebook on a signed-out device, offline-cached once opened; revoking the link stops it.
+- [ ] **13.5 Live editing, presence and cursors (M)** — edit links; edits go through the room (still encrypted) and
+  each participant's Drive; avatars of who is here and their pen position.
+  - Accept: two people drawing on one page see each other's strokes within a second and end identical.
 
 ## Not planned
 
