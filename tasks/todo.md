@@ -211,6 +211,11 @@ Cloudflare Worker with a Durable Object per shared notebook (free tier).
   snapshot when it doesn't. Own edits are numbered after everything seen.
   - Accept: three participants exchanging edits in random orders and delays end with the same notebook as the Drive
     merge of the same edits; the in-order case never rebuilds.
+  - Built: `core/live.ts` (`LiveDoc`). An edit gets its order number (`DocEvent.lc`) as it is made, and Drive sync's
+    `stampEdits` keeps it, so live editing and sync order edits the same way. Edits from a device that arrive ahead
+    of an earlier one wait for it; repeats are ignored. Tests: in-order delivery never rebuilds; 25 random rounds
+    of three people with delays, reordering and repeats end identical and equal to `mergeNotebook` of the same
+    edits; an edit made after seeing another sorts after it everywhere. Wired to the editor and relay in 13.5.
 - [ ] **13.2 Text documents on Yjs (M)** — `text.yjs` edits carry Yjs updates; TipTap's Collaboration extension;
   `doc.text` stays as a cache for search, thumbnails and export. Existing documents convert the same way on every
   device, so two devices converting one document don't duplicate it.

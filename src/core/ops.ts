@@ -45,6 +45,11 @@ export interface DocEvent {
   seq: number;
   ts: number;
   op: DocOp;
+  /**
+   * Its place in the order shared with other devices and collaborators (core/sync), when it was
+   * given one as it was made (live editing). Absent: numbered when it is uploaded.
+   */
+  lc?: number;
 }
 
 function updatePage(doc: NotebookDoc, pageId: string, fn: (p: Page) => Page): NotebookDoc {
