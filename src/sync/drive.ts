@@ -102,7 +102,10 @@ export class GoogleDrive implements Drive {
       headers: { 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': body.type || 'application/octet-stream' },
       body: JSON.stringify(metadata),
     });
-    const session = start.headers.get('Location');
+    // The session's address is in Location; if the browser isn't allowed to read that header,
+    // it is the same address plus the upload id, which Google always lets the page read.
+    const uploadId = start.headers.get('X-GUploader-UploadID');
+    const session = start.headers.get('Location') ?? (uploadId ? `${url}&upload_id=${encodeURIComponent(uploadId)}` : null);
     if (!session) throw new DriveError('Google Drive did not start the upload', 0);
     const res = await this.call(session, { method: 'PUT', body });
     return (await res.json()) as DriveFile;
