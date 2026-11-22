@@ -160,7 +160,9 @@ Size: S = 1–2 files, M = 3–5 files.
     popup, so it works in the iPad home-screen app; `core/account.ts` checks state, nonce, audience, issuer and
     expiry. Who is signed in is kept in localStorage; the hour-long Drive token only in sessionStorage. Sign out
     revokes the token and touches nothing else. Needs an OAuth client (README › Google sign-in); unset, sign-in
-    is hidden. **Left to check:** create the client, then sign in on the hosted app and the iPad.
+    is hidden. Client created (repository variable `GOOGLE_CLIENT_ID`; `.env.local` for dev); Google accepts
+    both redirect addresses, and Drive allows every request sync makes from the app's origin (checked by
+    preflight). **Left to check:** sign in on the hosted app and the iPad.
 - [ ] **12.3 Drive sync of notebooks (M)** — upload event batches, snapshots and blobs to the app data folder; pull and merge on open and on focus.
   - Accept: edit on two devices offline, reconnect, both converge with no lost strokes (merge logic unit-tested with fake Drive).
   - Built: `core/sync.ts` (pure) and `sync/engine.ts`. Each device uploads its own edits as immutable batches
@@ -174,7 +176,7 @@ Size: S = 1–2 files, M = 3–5 files.
     random interleavings) and 6 on IndexedDB, including this browser against a second device.
   - Limits: Drive access lasts an hour and renewing it needs a trip to Google, so sync pauses with Reconnect.
     Text documents edited on two devices at once keep the later version. Titles, folders and trash are 12.4.
-    **Left to check:** two real devices once the OAuth client exists.
+    **Left to check:** two real devices.
 - [ ] **12.4 Sync library, folders, elements and settings (S)** Depends: 12.3
   - Built: `core/librarySync.ts` (pure) and `sync/library.ts`. Each library value is an entry (a notebook's title,
     cover, cover image, favourite, trash, folder, lock and default template; each folder; each saved element; each
