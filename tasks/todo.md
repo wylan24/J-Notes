@@ -165,7 +165,7 @@ Size: S = 1–2 files, M = 3–5 files.
     preflight). Done on the hosted app: signs in (account added as a test user while the app is in Testing),
     stays signed in across reloads, first sync uploads; signing out with Remove from this device and back in
     downloads the notebook again.
-- [ ] **12.3 Drive sync of notebooks (M)** — upload event batches, snapshots and blobs to the app data folder; pull and merge on open and on focus.
+- [x] **12.3 Drive sync of notebooks (M)** — upload event batches, snapshots and blobs to the app data folder; pull and merge on open and on focus.
   - Accept: edit on two devices offline, reconnect, both converge with no lost strokes (merge logic unit-tested with fake Drive).
   - Built: `core/sync.ts` (pure) and `sync/engine.ts`. Each device uploads its own edits as immutable batches
     (`n.<doc>.log.<device>.<from>-<to>.json`), pictures once each, and now and then a snapshot with a version vector.
@@ -178,8 +178,8 @@ Size: S = 1–2 files, M = 3–5 files.
     random interleavings) and 6 on IndexedDB, including this browser against a second device.
   - Limits: Drive access lasts an hour and renewing it needs a trip to Google, so sync pauses with Reconnect.
     Text documents edited on two devices at once keep the later version. Titles, folders and trash are 12.4.
-    **Left to check:** two real devices.
-- [ ] **12.4 Sync library, folders, elements and settings (S)** Depends: 12.3
+    Checked on two real devices: offline edits on both converge.
+- [x] **12.4 Sync library, folders, elements and settings (S)** Depends: 12.3
   - Built: `core/librarySync.ts` (pure) and `sync/library.ts`. Each library value is an entry (a notebook's title,
     cover, cover image, favourite, trash, folder, lock and default template; each folder; each saved element; each
     synced setting), and the latest change to an entry wins (a clock that never goes backwards, then device). Each
@@ -190,7 +190,7 @@ Size: S = 1–2 files, M = 3–5 files.
     toolbar, eraser, lasso, snap, scroll, scribble to erase, read-only notebooks, spellcheck words, library sort.
     Per device: stylus only, theme, handwriting recognition, zoom, tabs, sidebar. Runs after notebooks each round.
   - Limits: settings changed on another device take effect when the screen using them next opens.
-- [ ] **12.5 First run on a new device; sign-out options (S)** — download all, progress UI; "keep local copies" choice. Depends: 12.3
+- [x] **12.5 First run on a new device; sign-out options (S)** — download all, progress UI; "keep local copies" choice. Depends: 12.3
   - Built: a new device downloads every notebook on its first sync (12.3), downloads first, with progress in the
     library ("Downloading 3 of 12 notebooks from Google Drive", with a bar) and Settings; signing in on a device
     that has notebooks shows its first upload the same way. Everyday syncs show no bar. Signing out asks: Keep
